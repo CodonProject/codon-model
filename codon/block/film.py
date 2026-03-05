@@ -57,7 +57,7 @@ class FiLM(BasicModel):
             channel_first (bool, optional): Whether the feature dimension is the 1st dimension (e.g., CNN [B, C, H, W]).
                 If False, assumes features are in the last dimension (e.g., Transformer [B, L, C]). Defaults to False.
         '''
-        super(FiLM, self).__init__()
+        super().__init__()
         
         if use_context_gate: use_gate = False
 

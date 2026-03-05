@@ -36,7 +36,7 @@ class MLP(BasicModel):
             use_gate (bool, optional): Whether to use the gating mechanism. Defaults to False.
             dropout (float, optional): Dropout probability. Defaults to 0.0.
         '''
-        super(MLP, self).__init__()
+        super().__init__()
         
         out_features = out_features or in_features
 

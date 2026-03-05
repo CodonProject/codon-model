@@ -1,5 +1,5 @@
 from codon.base  import *
-from codon.block.embedding import RotaryPositionalEmbedding
+from codon.block.embedding import BaseEmbedding
 from codon.ops.attention   import AttentionOutput, apply_attention
 
 
@@ -78,8 +78,8 @@ class MultiHeadAttention(BasicModel):
         kv_states: torch.Tensor = None,
         attention_mask: torch.Tensor = None,
         output_attentions: bool = False,
-        rotary_emb: RotaryPositionalEmbedding = None,
-        rotary_pos: int = 0,
+        position_emb: BaseEmbedding = None,
+        embedding_pos: int = 0,
         past_key_value: tuple[torch.Tensor, torch.Tensor] = None,
         use_cache: bool = False
     ) -> AttentionOutput:
@@ -94,9 +94,9 @@ class MultiHeadAttention(BasicModel):
                                                      Defaults to None.
             output_attentions (bool, optional): Whether to output attention weights. 
                                                 Defaults to False.
-            rotary_emb (RotaryPositionalEmbedding, optional): Rotary positional embedding module. 
-                                                              Defaults to None.
-            rotary_pos (int, optional): Starting position for rotary embedding. Defaults to 0.
+            position_emb (BaseEmbedding, optional): Positional embedding module. 
+                                                    Defaults to None.
+            embedding_pos (int, optional): Starting position for embedding. Defaults to 0.
             past_key_value (tuple[torch.Tensor, torch.Tensor], optional): Past key-value cache. 
                                                                           Defaults to None.
             use_cache (bool, optional): Whether to use KV cache. Defaults to False.
@@ -126,9 +126,9 @@ class MultiHeadAttention(BasicModel):
             Q = self.q_norm(Q)
             K = self.k_norm(K)
         
-        if rotary_emb is not None:
-            Q = rotary_emb(Q, start_pos=rotary_pos)
-            K = rotary_emb(K, start_pos=rotary_pos)
+        if position_emb is not None:
+            Q = position_emb(Q, start_pos=embedding_pos)
+            K = position_emb(K, start_pos=embedding_pos)
         
         current_key_value = None
         if use_cache:

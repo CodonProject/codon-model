@@ -69,7 +69,7 @@ class CausalConv1d(BasicModel):
             use_res (bool, optional): Whether to use residual connection. Defaults to True.
             dropout (float, optional): Dropout probability. Defaults to 0.2.
         '''
-        super(CausalConv1d, self).__init__()
+        super().__init__()
         
         self.padding = (kernel_size - 1) * dilation
         self.use_res = use_res
@@ -227,7 +227,7 @@ class ConvBlock(BasicModel):
             dropout (float, optional): Dropout probability. Defaults to 0.0.
             pre_norm (bool, optional): Whether to use Pre-Norm (Norm-Conv-Act) structure. Defaults to False (Conv-Norm-Act).
         '''
-        super(ConvBlock, self).__init__()
+        super().__init__()
         
         self.pre_norm = pre_norm
         
@@ -351,7 +351,7 @@ class DepthwiseSeparableConv(BasicModel):
             dropout (float): Dropout probability.
             use_res (bool): Whether to use residual connection when input/output channels match and stride is 1.
         '''
-        super(DepthwiseSeparableConv, self).__init__()
+        super().__init__()
 
         self.depthwise = ConvBlock(
             in_channels=in_channels,
@@ -446,7 +446,7 @@ class ResBasicBlock(BasicModel):
             dropout (float, optional): Dropout probability. Defaults to 0.0.
             variant (str, optional): Variant type ('original', 'pre_act'). Defaults to 'original'.
         '''
-        super(ResBasicBlock, self).__init__()
+        super().__init__()
         
         self.variant = variant
         self.activation = activation
