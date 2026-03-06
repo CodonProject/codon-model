@@ -1,34 +1,46 @@
 import torch.nn.functional as F
 
 from codon.base import *
-
-from dataclasses import dataclass
-from typing      import Union
+from codon.block.mlp import MLP
+from codon.block.moe import *
 
 import math
 
 
-@dataclass
-class MoEOutput:
-    output: torch.Tensor
-    aux_loss: Union[torch.Tensor, None]
-
-@dataclass
-class MoEInfo:
-    total_count: int
-    active_count: int
-
-
 class ParallelExpert(nn.Module):
-    def __init__(self, num_experts, in_features, hidden_features, out_features, use_gate=False, dropout=0.1):
+    '''
+    A module that computes multiple expert outputs in parallel.
+
+    This module manages weights for multiple experts and processes inputs efficiently using batch matrix multiplication.
+
+    Attributes:
+        use_gate (bool): Whether to use Gated Linear Unit (GLU) variants.
+        num_experts (int): The number of experts.
+        weight1 (nn.Parameter): First weight matrix with shape (num_experts, in_features, inter_dim).
+        weight2 (nn.Parameter): Second weight matrix with shape (num_experts, hidden_features, out_features).
+        act (nn.Module): Activation function.
+        dropout (nn.Dropout): Dropout layer.
+    '''
+
+    def __init__(self, num_experts: int, in_features: int, hidden_features: int, out_features: int, use_gate: bool = False, dropout: float = 0.1) -> None:
+        '''
+        Initializes the ParallelExpert module.
+
+        Args:
+            num_experts (int): The number of experts.
+            in_features (int): Size of each input sample.
+            hidden_features (int): Size of the hidden layer.
+            out_features (int): Size of each output sample.
+            use_gate (bool): If True, uses SiLU activation with gating; otherwise, uses GELU.
+            dropout (float): Dropout probability.
+        '''
         super().__init__()
         self.use_gate = use_gate
         self.num_experts = num_experts
         
-        # 如果使用 SwiGLU (use_gate=True)，中间维度需要翻倍
         inter_dim = hidden_features * 2 if use_gate else hidden_features
 
-        # 权重形状: [Experts, In, Hidden] -> 这允许我们使用 torch.bmm
+        # [Experts, In, Hidden]
         self.weight1 = nn.Parameter(torch.empty(num_experts, in_features, inter_dim))
         self.weight2 = nn.Parameter(torch.empty(num_experts, hidden_features, out_features))
         
@@ -37,21 +49,30 @@ class ParallelExpert(nn.Module):
         
         self.reset_parameters()
 
-    def reset_parameters(self):
-        # 初始化技巧：对并行权重进行循环初始化
+    def reset_parameters(self) -> None:
+        '''
+        Resets the parameters of the experts using Kaiming Uniform initialization.
+        '''
         for i in range(self.num_experts):
             nn.init.kaiming_uniform_(self.weight1[i], a=math.sqrt(5))
             nn.init.kaiming_uniform_(self.weight2[i], a=math.sqrt(5))
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        '''
+        Performs the forward pass for all experts in parallel.
+
+        Args:
+            x (torch.Tensor): Input tensor with shape (num_experts, capacity, in_features).
+
+        Returns:
+            torch.Tensor: Output tensor with shape (num_experts, capacity, out_features).
+        '''
         # x shape: [Num_Experts, Capacity, In_Features]
         # Weight1: [Num_Experts, In_Features, Inter_Dim]
         
-        # 1. 第一层并行计算 (Batch Matrix Multiply)
-        # 结果: [Num_Experts, Capacity, Inter_Dim]
+        # [Num_Experts, Capacity, Inter_Dim]
         h = torch.bmm(x, self.weight1)
         
-        # 2. 激活函数
         if self.use_gate:
             gate, val = h.chunk(2, dim=-1)
             h = self.act(gate) * val
@@ -60,13 +81,30 @@ class ParallelExpert(nn.Module):
             
         h = self.dropout(h)
         
-        # 3. 第二层并行计算
         # Weight2: [Num_Experts, Hidden_Features, Out_Features]
         out = torch.bmm(h, self.weight2)
         
         return out
 
 class ParallelMoE(BasicModel):
+    '''
+    A Parallel Mixture-of-Experts (MoE) model.
+
+    This model routes tokens to the top-k experts and computes their outputs in parallel. It also supports shared experts and auxiliary loss for load balancing.
+
+    Attributes:
+        model_dim (int): The dimension of the model.
+        top_k (int): The number of experts to route each token to.
+        num_experts (int): The total number of experts.
+        num_shared_experts (int): The number of shared experts that process all tokens.
+        use_aux_loss (bool): Whether to use auxiliary loss for load balancing.
+        capacity_factor (float): Factor to determine the capacity of each expert.
+        use_gate (bool): Whether to use Gated Linear Unit (GLU) variants in experts.
+        gate (nn.Linear): The gating network to route tokens to experts.
+        parallel_experts (ParallelExpert): The parallel experts module.
+        shared_experts (nn.ModuleList): List of shared experts, if any.
+    '''
+
     def __init__(
         self,
         model_dim: int,
@@ -76,7 +114,19 @@ class ParallelMoE(BasicModel):
         use_aux_loss: bool = False,
         use_gate: bool = False,
         capacity_factor: float = 1.25,
-    ):
+    ) -> None:
+        '''
+        Initializes the ParallelMoE model.
+
+        Args:
+            model_dim (int): The dimension of the model.
+            top_k (int): The number of experts to route each token to.
+            num_experts (int): The total number of experts.
+            num_shared_experts (int): The number of shared experts that process all tokens.
+            use_aux_loss (bool): Whether to use auxiliary loss for load balancing.
+            use_gate (bool): Whether to use Gated Linear Unit (GLU) variants in experts.
+            capacity_factor (float): Factor to determine the capacity of each expert.
+        '''
         super().__init__()
         self.model_dim = model_dim
         self.top_k = top_k
@@ -88,41 +138,36 @@ class ParallelMoE(BasicModel):
 
         hidden_dim = model_dim * 4
 
-        # 1. 门控网络
         self.gate = nn.Linear(model_dim, num_experts, bias=False)
 
-        # 2. 并行专家 (替代原来的 ModuleList)
         self.parallel_experts = ParallelExpert(
             num_experts, model_dim, hidden_dim, model_dim, use_gate=use_gate
         )
 
-        # 3. 共享专家 (稍微简单处理，也可以并行化，但通常共享专家数量少)
         self.shared_experts = None
         if num_shared_experts > 0:
+            act_layer = "silu" if use_gate else "gelu"
             self.shared_experts = nn.ModuleList([
-                self._create_mlp(model_dim, hidden_dim, use_gate) for _ in range(num_shared_experts)
+                MLP(
+                    in_features=model_dim,
+                    hidden_features=hidden_dim,
+                    out_features=model_dim,
+                    use_gate=use_gate,
+                    act_layer=act_layer
+                ) for _ in range(num_shared_experts)
             ])
 
-    def _create_mlp(self, dim, hidden, use_gate):
-        # 简单的 MLP 构建辅助函数
-        class SimpleMLP(nn.Module):
-            def __init__(self):
-                super().__init__()
-                inter = hidden * 2 if use_gate else hidden
-                self.fc1 = nn.Linear(dim, inter)
-                self.fc2 = nn.Linear(hidden, dim)
-                self.act = nn.SiLU() if use_gate else nn.GELU()
-            def forward(self, x):
-                h = self.fc1(x)
-                if use_gate:
-                    g, v = h.chunk(2, dim=-1)
-                    h = self.act(g) * v
-                else:
-                    h = self.act(h)
-                return self.fc2(h)
-        return SimpleMLP()
-
     def count_params(self, trainable_only: bool = False, active_only: bool = False) -> int:
+        '''
+        Counts the number of parameters in the model.
+
+        Args:
+            trainable_only (bool): If True, counts only trainable parameters.
+            active_only (bool): If True, counts only active parameters (parameters used during a single forward pass).
+
+        Returns:
+            int: The number of parameters.
+        '''
         if not active_only:
             return super().count_params(trainable_only, active_only)
         
@@ -139,14 +184,28 @@ class ParallelMoE(BasicModel):
 
     @property
     def info(self) -> MoEInfo:
+        '''
+        Returns information about the MoE model's parameters.
+
+        Returns:
+            MoEInfo: An object containing total and active parameter counts.
+        '''
         total = self.count_params(active_only=False)
         active = self.count_params(active_only=True)
         return MoEInfo(total_count=total, active_count=active)
 
     def forward(self, x: torch.Tensor) -> MoEOutput:
-        """
-        全并行的 Forward 流程
-        """
+        '''
+        Performs the forward pass of the ParallelMoE model.
+
+        This method routes tokens to experts, computes expert outputs in parallel, adds shared expert outputs, and returns the combined result.
+
+        Args:
+            x (torch.Tensor): Input tensor with shape (batch_size, seq_len, model_dim).
+
+        Returns:
+            MoEOutput: The output of the MoE model, containing the final output tensor and auxiliary loss.
+        '''
         original_shape = x.shape
         batch, seq_len, dim = original_shape
         num_tokens = batch * seq_len

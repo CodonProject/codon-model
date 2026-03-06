@@ -23,7 +23,8 @@ class MLP(BasicModel):
         out_features: int = None,
         bias: bool = True,
         use_gate: bool = False,
-        dropout: float = 0.0
+        dropout: float = 0.0,
+        act_layer: str = "silu",
     ):
         '''
         Initialize the MLP module.
@@ -35,6 +36,7 @@ class MLP(BasicModel):
             bias (bool, optional): Whether to use bias in linear layers. Defaults to True.
             use_gate (bool, optional): Whether to use the gating mechanism. Defaults to False.
             dropout (float, optional): Dropout probability. Defaults to 0.0.
+            act_layer (str, optional): Activation function name (e.g. 'silu', 'gelu'). Defaults to 'silu'.
         '''
         super().__init__()
         
@@ -46,8 +48,16 @@ class MLP(BasicModel):
         self.bias = bias
         self.use_gate = use_gate
         self.dropout = nn.Dropout(dropout)
-        self.act = nn.SiLU()
         
+        if act_layer.lower() == "silu":
+            self.act = nn.SiLU()
+        elif act_layer.lower() == "gelu":
+            self.act = nn.GELU()
+        elif act_layer.lower() == "relu":
+            self.act = nn.ReLU()
+        else:
+            raise NotImplementedError(f"Activation {act_layer} not implemented")
+
         if use_gate:
             self.gate_proj = nn.Linear(in_features, hidden_features, bias=bias)
             self.up_proj = nn.Linear(in_features, hidden_features, bias=bias)
