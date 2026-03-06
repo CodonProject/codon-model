@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from typing import Callable, Any, Iterator
+from typing import Callable, Any, Iterator, Union
 
 
 class BasicModel(nn.Module):
@@ -72,7 +72,7 @@ class BasicModel(nn.Module):
             return (p for p in self.parameters() if p.requires_grad)
         return self.parameters()
     
-    def count_params(self, trainable_only:bool=False, active_only:bool=False) -> int:
+    def count_params(self, trainable_only:bool=False, active_only:bool=False, human_readable:bool=False, seen:set=None) -> Union[int, str]:
         '''
         Count the number of parameters in the model.
 
@@ -81,26 +81,50 @@ class BasicModel(nn.Module):
                                              Defaults to False.
             active_only (bool, optional): If True, count only active parameters (e.g. for MoE).
                                           Defaults to False.
+            human_readable (bool, optional): If True, return a string representation with units (e.g. M, B).
+                                             Defaults to False.
+            seen (set, optional): A set of already counted parameters to avoid duplicates.
+                                  Defaults to None.
 
         Returns:
-            int: The total number of parameters.
+            Union[int, str]: The total number of parameters.
         '''
+        if seen is None:
+            seen = set()
+
         if not active_only:
-            return sum(p.numel() for p in self.get_params(trainable_only))
+            total = 0
+            for p in self.get_params(trainable_only):
+                if p not in seen:
+                    seen.add(p)
+                    total += p.numel()
+        else:
+            total = self._count_params_recursive(self, trainable_only, active_only, seen)
         
-        return self._count_params_recursive(self, trainable_only, active_only)
+        if human_readable:
+            if total >= 1e9:
+                return f'{total / 1e9:.2f}B'
+            elif total >= 1e6:
+                return f'{total / 1e6:.2f}M'
+            elif total >= 1e3:
+                return f'{total / 1e3:.2f}K'
+            return str(total)
+
+        return total
 
     @staticmethod
-    def _count_params_recursive(module: nn.Module, trainable_only: bool, active_only: bool) -> int:
+    def _count_params_recursive(module: nn.Module, trainable_only: bool, active_only: bool, seen: set) -> int:
         total = 0
         for p in module.parameters(recurse=False):
-            if not trainable_only or p.requires_grad:
-                total += p.numel()
+            if p not in seen:
+                if not trainable_only or p.requires_grad:
+                    seen.add(p)
+                    total += p.numel()
         
         for child in module.children():
             if isinstance(child, BasicModel):
-                total += child.count_params(trainable_only, active_only)
+                total += child.count_params(trainable_only, active_only, seen=seen)
             else:
-                total += BasicModel._count_params_recursive(child, trainable_only, active_only)
+                total += BasicModel._count_params_recursive(child, trainable_only, active_only, seen)
         
         return total

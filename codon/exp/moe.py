@@ -37,6 +37,7 @@ class ParallelExpert(nn.Module):
         super().__init__()
         self.use_gate = use_gate
         self.num_experts = num_experts
+        self.dropout_p = dropout
         
         inter_dim = hidden_features * 2 if use_gate else hidden_features
 

@@ -47,6 +47,7 @@ class MLP(BasicModel):
         self.out_features = out_features
         self.bias = bias
         self.use_gate = use_gate
+        self.dropout_p = dropout
         self.dropout = nn.Dropout(dropout)
         
         if act_layer.lower() == "silu":
