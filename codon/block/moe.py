@@ -72,11 +72,11 @@ class MoE(BasicModel):
         use_gate (bool): Whether experts use gating mechanism.
     '''
     def __init__(
-        self, 
-        model_dim: int, 
-        top_k: int, 
-        num_experts: int, 
-        num_shared_experts: int = 0, 
+        self,
+        model_dim: int,
+        top_k: int,
+        num_experts: int,
+        num_shared_experts: int = 0,
         use_aux_loss: bool = False,
         use_gate: bool = False
     ):
