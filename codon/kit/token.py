@@ -1,7 +1,28 @@
-from tokenizers import Tokenizer, pre_tokenizers, decoders
-from tokenizers.models import BPE
-from tokenizers import normalizers
+import json
+import os
+import zipfile
+from dataclasses import dataclass
+from tokenizers  import Tokenizer, pre_tokenizers, decoders
+from tokenizers  import normalizers
+from tokenizers.models   import BPE
 from tokenizers.trainers import BpeTrainer
+
+from transformers import PreTrainedTokenizerFast
+
+from typing import Union, Optional
+
+@dataclass
+class TokenizerTrainerResult:
+    '''
+    Result of the tokenizer trainer creation.
+
+    Attributes:
+        tokenizer (Tokenizer): The configured tokenizer instance.
+        trainer (BpeTrainer): The configured BPE trainer instance.
+    '''
+    tokenizer: Tokenizer
+    trainer: BpeTrainer
+
 
 core_tokens = ['[unk]', '[pad]', '[sep]']
 chat_tokens = [
@@ -112,20 +133,21 @@ def create_tokenizer_trainer(
     unk_token: str='[unk]',
     vocab_size: int=32000,
     special_tokens: list[str]=base_special_tokens
-) -> tuple:
-    ''' 创建一个BPE Tokenizer训练器
+) -> TokenizerTrainerResult:
+    '''
+    Creates a BPE Tokenizer trainer.
 
-    配置并返回一个用于训练BPE (Byte-Pair Encoding) 模型的分词器训练对象。
-    该训练器预置了NFKC标准化、数字分割和字节级预分词处理。
+    Configures and returns a tokenizer trainer object for training BPE (Byte-Pair Encoding) models.
+    The trainer is pre-configured with NFKC normalization, digit splitting, and byte-level pre-tokenization.
 
     Args:
-        unk_token (str): 未知Token的标识符。默认为 '[unk]'。
-        vocab_size (int): 目标词表大小。默认为 32000。
-        special_tokens (list[str] | tuple[str]): 特殊Token列表。
-            默认为 base_special_tokens，包含核心、聊天、推理、代码、工具及多模态Token。
+        unk_token (str): Identifier for unknown tokens. Defaults to '[unk]'.
+        vocab_size (int): Target vocabulary size. Defaults to 32000.
+        special_tokens (list[str]): List of special tokens.
+            Defaults to base_special_tokens, including core, chat, reasoning, code, tool, and multimodal tokens.
 
     Returns:
-        tuple: (tokenizer, trainer) 
+        TokenizerTrainerResult: A dataclass containing the tokenizer and trainer instances.
     '''
     tokenizer = Tokenizer(BPE(unk_token=unk_token))
 
@@ -149,4 +171,106 @@ def create_tokenizer_trainer(
         min_frequency=10
     )
 
-    return tokenizer, trainer
+    return TokenizerTrainerResult(tokenizer=tokenizer, trainer=trainer)
+
+
+class PackedTokenizer:
+    def __init__(self, tokenizer: Optional[Union[Tokenizer, str]]):
+        self._tokenizer: Optional[Tokenizer] = None
+        self._fast_tokenizer: Optional[PreTrainedTokenizerFast] = None
+        self.config = {}
+        self.template = chat_template
+
+        if isinstance(tokenizer, str):
+            self.load(tokenizer)
+        elif isinstance(tokenizer, Tokenizer):
+            self._tokenizer = tokenizer
+            self.config = {
+                'unk_token': '[unk]',
+                'pad_token': '[pad]',
+                'bos_token': '[im_start]',
+                'eos_token': '[im_end]',
+            }
+            self._update_fast_tokenizer()
+
+    def _update_fast_tokenizer(self) -> None:
+        '''
+        Updates the cached PreTrainedTokenizerFast instance.
+        '''
+        if self._tokenizer is None:
+            self._fast_tokenizer = None
+            return
+
+        self._fast_tokenizer = PreTrainedTokenizerFast(
+            tokenizer_object=self._tokenizer,
+            unk_token=self.config.get('unk_token', '[unk]'),
+            pad_token=self.config.get('pad_token', '[pad]'),
+            bos_token=self.config.get('bos_token', '[im_start]'),
+            eos_token=self.config.get('eos_token', '[im_end]'),
+            chat_template=self.template,
+            clean_up_tokenization_spaces=False
+        )
+
+    @property
+    def tokenizer(self) -> Tokenizer:
+        if self._tokenizer is None:
+            raise ValueError("Tokenizer is not loaded.")
+        return self._tokenizer
+    
+    @property
+    def fast_tokenizer(self) -> PreTrainedTokenizerFast:
+        if self._fast_tokenizer is None:
+            raise ValueError('Tokenizer is not loaded.')
+        return self._fast_tokenizer
+    
+    def save(self, path: str) -> 'PackedTokenizer':
+        if self._tokenizer is None:
+            raise ValueError("No tokenizer to save.")
+
+        with zipfile.ZipFile(path, 'w') as z:
+            # Save tokenizer.json
+            z.writestr('tokenizer.json', self._tokenizer.to_str())
+            
+            # Save tokenizer_config.json
+            z.writestr('tokenizer_config.json', json.dumps(self.config, indent=2))
+            
+            # Save chat_template.jinja
+            z.writestr('chat_template.jinja', self.template)
+            
+        return self
+    
+    def load(self, path: str) -> 'PackedTokenizer':
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"File not found: {path}")
+
+        with zipfile.ZipFile(path, 'r') as z:
+            file_list = z.namelist()
+            
+            # Helper to find file in zip (ignoring directory prefix if any)
+            def find_file(name):
+                for f in file_list:
+                    if f == name or f.endswith(f'/{name}'):
+                        return f
+                return None
+
+            # Load tokenizer.json
+            tokenizer_file = find_file('tokenizer.json')
+            if tokenizer_file:
+                tokenizer_json = z.read(tokenizer_file).decode('utf-8')
+                self._tokenizer = Tokenizer.from_str(tokenizer_json)
+            else:
+                raise ValueError("tokenizer.json not found in zip file")
+
+            # Load tokenizer_config.json
+            config_file = find_file('tokenizer_config.json')
+            if config_file:
+                config_json = z.read(config_file).decode('utf-8')
+                self.config = json.loads(config_json)
+
+            # Load chat_template.jinja
+            template_file = find_file('chat_template.jinja')
+            if template_file:
+                self.template = z.read(template_file).decode('utf-8')
+
+        self._update_fast_tokenizer()
+        return self

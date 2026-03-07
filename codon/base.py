@@ -3,6 +3,9 @@ import torch.nn as nn
 
 from typing import Callable, Any, Iterator, Union
 
+from safetensors.torch import save_model as safe_save_model
+from safetensors.torch import load_model as safe_load_model
+
 
 class BasicModel(nn.Module):
     '''
@@ -128,3 +131,37 @@ class BasicModel(nn.Module):
                 total += BasicModel._count_params_recursive(child, trainable_only, active_only, seen)
         
         return total
+    
+    def load_pretrained(self, path: str) -> None:
+        '''
+        Load a pretrained model from a file.
+
+        Args:
+            path (str): The path to the model file.
+        '''
+        if path.endswith('.safetensors'):
+            safe_load_model(self, path)
+            return
+
+        state_dict = torch.load(path, map_location=self.device)
+
+        if isinstance(state_dict, dict):
+            if 'model_state_dict' in state_dict:
+                state_dict = state_dict['model_state_dict']
+            elif 'state_dict' in state_dict:
+                state_dict = state_dict['state_dict']
+        
+        self.load_state_dict(state_dict)
+    
+    def save_pretrained(self, path: str) -> None:
+        '''
+        Save the model to a file.
+
+        Args:
+            path (str): The path to save the model file.
+        '''
+        if path.endswith('.safetensors'):
+            safe_save_model(self, path)
+        else:
+            state_dict = self.state_dict()
+            torch.save(state_dict, path)

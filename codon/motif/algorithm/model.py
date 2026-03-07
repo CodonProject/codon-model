@@ -28,7 +28,7 @@ class MotifA1(BasicModel):
         super().__init__()
 
         self.token_emb = nn.Embedding(vocab_size, model_dim)
-        self.position_emb = RotaryEmbedding(model_dim)
+        self.position_emb = RotaryEmbedding(model_dim // num_heads)
         self.dropout = nn.Dropout(dropout)
 
         self.decoder = nn.ModuleList([
@@ -37,7 +37,7 @@ class MotifA1(BasicModel):
                 num_heads=num_heads,
                 num_kv_heads=num_kv_heads,
                 top_k=1,
-                num_experts=8,
+                num_experts=4,
                 num_shared_experts=1,
                 use_aux_loss=False,
                 use_expert_gate=True,
@@ -53,6 +53,19 @@ class MotifA1(BasicModel):
 
         if tie_weights:
             self.proj_out.weight = self.token_emb.weight
+
+        self.apply(self._init_weights)
+    
+    def _init_weights(self, module):
+        std = 0.02
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=std)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=std)
+            if module.padding_idx is not None:
+                torch.nn.init.zeros_(module.weight[module.padding_idx])
     
     def forward(
         self,

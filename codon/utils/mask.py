@@ -1,5 +1,11 @@
 import torch
 
+from tokenizers  import Tokenizer
+from dataclasses import dataclass
+
+from typing import Union
+
+
 
 def make_padding_mask(src: torch.Tensor, pad_idx: int = 0) -> torch.Tensor:
     '''
@@ -89,3 +95,90 @@ def make_sliding_window_mask(
 
     mask = pad_mask & window_mask
     return mask
+
+
+@dataclass
+class MaskedContent:
+    '''
+    Result of the token masking process.
+
+    Attributes:
+        content (str): The original text content.
+        tokenized (Union[list[int], torch.Tensor]): The list of token IDs or tensor.
+        mask (Union[list[int], torch.Tensor]): The mask values (0 for masked, 1 for unmasked).
+    '''
+    content: str
+    tokenized: Union[list[int], torch.Tensor]
+    mask: Union[list[int], torch.Tensor]
+
+
+class TokenMask:
+    '''
+    Handles token masking logic based on special tokens.
+    '''
+
+    def __init__(self, tokenizer: Tokenizer) -> None:
+        '''
+        Initializes the TokenMask.
+
+        Args:
+            tokenizer (Tokenizer): The configured tokenizer instance.
+        '''
+        self.tokenizer = tokenizer
+
+    def mask(
+        self,
+        content: str,
+        special_token: Union[str, int, list[Union[str, int]]],
+        tensor_mask: bool = True
+    ) -> MaskedContent:
+        '''
+        Tokenizes content and generates a mask based on the first found special token.
+
+        The tokens before and including the special token are masked (0).
+        The tokens after the special token are unmasked (1).
+        If the special token is not found, all tokens are masked (0).
+
+        Args:
+            content (str): The text content to tokenize and mask.
+            special_token (Union[str, int, list[Union[str, int]]]): The special token(s) to use as a separator.
+                Can be a string, an integer ID, or a priority list of strings/integers.
+            tensor_mask (bool, optional): Whether to return tensors instead of lists. Defaults to True.
+
+        Returns:
+            MaskedContent: Dataclass containing the original content, token IDs, and the generated mask.
+        '''
+        encoded = self.tokenizer.encode(content)
+        ids = encoded.ids
+
+        candidates = []
+        if isinstance(special_token, list):
+            candidates = special_token
+        else:
+            candidates = [special_token]
+
+        split_index = -1
+
+        for cand in candidates:
+            tid = None
+            if isinstance(cand, str):
+                tid = self.tokenizer.token_to_id(cand)
+            elif isinstance(cand, int):
+                tid = cand
+
+            if tid is not None:
+                try:
+                    split_index = ids.index(tid)
+                    break
+                except ValueError: continue
+
+        mask = [0] * len(ids)
+        if split_index != -1:
+            for i in range(split_index + 1, len(ids)):
+                mask[i] = 1
+
+        if tensor_mask:
+            ids = torch.tensor(ids)
+            mask = torch.tensor(mask)
+
+        return MaskedContent(content=content, tokenized=ids, mask=mask)
