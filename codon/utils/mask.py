@@ -7,7 +7,6 @@ from enum        import Enum, auto
 from typing import Union
 
 
-
 class MaskMode(Enum):
     '''
     Enumeration of different masking modes for TokenMask.
@@ -200,16 +199,11 @@ class TokenMask:
         mask = []
 
         if sep_id is None:
-             # Special token not found.
-             # If mode implies keeping the first part, and there's no separator, the whole thing is the "first part".
-             # Modes 2, 4, 6 (Keep First / First Mask Post) -> All 1
-             # Modes 1, 3, 5 (Mask First / First Mask Pre) -> All 0
              if mode in [MaskMode.FIRST_MASK_POST, MaskMode.LAST_MASK_POST, MaskMode.ALL_KEEP_FIRST]:
                  mask = [1] * len(ids)
              else:
                  mask = [0] * len(ids)
         else:
-            # Find indices
             indices = [i for i, x in enumerate(ids) if x == sep_id]
             
             if mode == MaskMode.FIRST_MASK_PRE:
