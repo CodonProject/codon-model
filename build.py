@@ -32,11 +32,11 @@ def build() -> None:
 
 def install() -> None:
     '''
-    Installs the package in editable mode.
+    Installs the package from the built distribution.
     '''
-    print('Installing package in editable mode...')
+    print('Installing package...')
     try:
-        subprocess.run([sys.executable, '-m', 'pip', 'install', '-e', '.'], check=True)
+        subprocess.run([sys.executable, '-m', 'pip', 'install', '.'], check=True)
         print('Installation successful.')
     except subprocess.CalledProcessError as e:
         print(f'Installation failed with error: {e}')
