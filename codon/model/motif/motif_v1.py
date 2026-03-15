@@ -48,6 +48,31 @@ class MotifV1DecoderOutput:
     hidden_states: torch.Tensor
 
 
+@dataclass
+class MotifV1Output:
+    '''
+    Output of the MotifV1 model.
+
+    Attributes:
+        reconstructed_image (torch.Tensor): Reconstructed output image patches with shape [num_patches, out_features, patch_size, patch_size].
+        z_q (torch.Tensor): Quantized latent tensor with shape [num_patches, latent_dim].
+        quantization_loss (torch.Tensor): Total quantization loss from codebook.
+        indices (torch.Tensor): Integer indices of quantized bits with shape [num_patches].
+        entropy (torch.Tensor): Average bit-wise entropy from codebook.
+        perplexity (torch.Tensor): Perplexity calculated as 2^entropy.
+        encoder_hidden_states (torch.Tensor): Hidden states from encoder before quantization.
+        decoder_hidden_states (torch.Tensor): Hidden states from decoder after attention.
+    '''
+    reconstructed_image: torch.Tensor
+    z_q: torch.Tensor
+    quantization_loss: torch.Tensor
+    indices: torch.Tensor
+    entropy: torch.Tensor
+    perplexity: torch.Tensor
+    encoder_hidden_states: torch.Tensor
+    decoder_hidden_states: torch.Tensor
+
+
 class MotifV1Encoder(BasicModel):
     def __init__(
         self,
@@ -96,7 +121,7 @@ class MotifV1Encoder(BasicModel):
         )
 
         self.rope_emb = rope_emb if isinstance(rope_emb, InterleavedRotaryEmbedding) and rope_emb.num_axes >= 2 else InterleavedRotaryEmbedding(
-            model_dim=latent_dim,
+            model_dim=latent_dim // num_heads,
             num_axes=2
         )
     
@@ -143,12 +168,12 @@ class MotifV1Encoder(BasicModel):
 
         codebook_out: LookupFreeQuantizationOutput = self.codebook(z)
 
-        z_q = codebook_out.z_q.permute(0, 2, 3, 1).squeeze(0)
+        z_q = codebook_out.z_q.permute(0, 2, 3, 1).reshape(-1, self.latent_dim)
 
         return MotifV1EncoderOutput(
             z_q=z_q,
             loss=codebook_out.loss,
-            indices=codebook_out.indices.squeeze(0),
+            indices=codebook_out.indices.reshape(-1),
             entropy=codebook_out.entropy,
             perplexity=codebook_out.perplexity,
             hidden_states=attn_out.output.squeeze(0),
@@ -202,7 +227,7 @@ class MotifV1Decoder(BasicModel):
         )
 
         self.rope_emb = rope_emb if isinstance(rope_emb, InterleavedRotaryEmbedding) and rope_emb.num_axes >= 2 else InterleavedRotaryEmbedding(
-            model_dim=latent_dim,
+            model_dim=latent_dim // num_heads,
             num_axes=2
         )
 
@@ -283,5 +308,107 @@ class MotifV1Decoder(BasicModel):
 
 
 class MotifV1(BasicModel):
-    def __init__(self):
+    '''
+    MotifV1 autoencoder model combining MotifV1Encoder and MotifV1Decoder.
+    
+    Attributes:
+        encoder (MotifV1Encoder): The encoder part of the model.
+        decoder (MotifV1Decoder): The decoder part of the model.
+        rope_emb (InterleavedRotaryEmbedding): Shared rotary positional embedding for both encoder and decoder.
+    '''
+
+    def __init__(
+        self,
+        in_features: int = 3,
+        out_features: int = 3,
+        patch_size: int = 12,
+        latent_dim: int = 256,
+        num_heads: int = 4,
+        num_kv_heads: int = 4,
+        codebook_dim: int = 18,
+        entropy_weight: float = 0.1,
+        commitment_weight: float = 0.25,
+        diversity_gamma: float = 1.0,
+        base_channels: int = 64,
+        initial_size: int = None,
+        rope_emb: InterleavedRotaryEmbedding = None,
+        norm: str = 'batch',
+        activation: str = 'relu'
+    ) -> None:
+        '''
+        Initializes the MotifV1 model.
+
+        Args:
+            in_features (int): Number of input features (channels). Defaults to 3.
+            out_features (int): Number of output features (channels). Defaults to 3.
+            patch_size (int): The spatial size of the patch. Defaults to 12.
+            latent_dim (int): The dimensionality of the latent representation. Defaults to 256.
+            num_heads (int): Number of attention heads. Defaults to 4.
+            num_kv_heads (int): Number of Key/Value attention heads. Defaults to 4.
+            codebook_dim (int): Dimension of the codebook. Defaults to 18.
+            entropy_weight (float): Weight for the entropy loss. Defaults to 0.1.
+            commitment_weight (float): Weight for the commitment loss. Defaults to 0.25.
+            diversity_gamma (float): Gamma value for diversity loss. Defaults to 1.0.
+            base_channels (int): Base channel width for the upsampling module in decoder. Defaults to 64.
+            initial_size (int, optional): The spatial size of the feature map before upsampling. Defaults to None.
+            rope_emb (InterleavedRotaryEmbedding, optional): 2D rotary positional embedding. Defaults to None.
+            norm (str): Normalization type for convolution blocks. Defaults to 'batch'.
+            activation (str): Activation function type. Defaults to 'relu'.
+        '''
         super().__init__()
+        
+        self.rope_emb = rope_emb if isinstance(rope_emb, InterleavedRotaryEmbedding) and rope_emb.num_axes >= 2 else InterleavedRotaryEmbedding(
+            model_dim=latent_dim // num_heads,
+            num_axes=2
+        )
+        
+        self.encoder = MotifV1Encoder(
+            in_features=in_features,
+            patch_size=patch_size,
+            latent_dim=latent_dim,
+            num_heads=num_heads,
+            num_kv_heads=num_kv_heads,
+            codebook_dim=codebook_dim,
+            entropy_weight=entropy_weight,
+            commitment_weight=commitment_weight,
+            diversity_gamma=diversity_gamma,
+            rope_emb=self.rope_emb
+        )
+        
+        self.decoder = MotifV1Decoder(
+            latent_dim=latent_dim,
+            out_features=out_features,
+            patch_size=patch_size,
+            num_heads=num_heads,
+            num_kv_heads=num_kv_heads,
+            base_channels=base_channels,
+            initial_size=initial_size,
+            rope_emb=self.rope_emb,
+            norm=norm,
+            activation=activation
+        )
+        
+    def forward(self, splited_image: torch.Tensor, grid_shape: tuple) -> MotifV1Output:
+        '''
+        Forward pass of the MotifV1 model.
+
+        Args:
+            splited_image (torch.Tensor): Input tensor with shape [num_patches, channels, patch_size, patch_size].
+            grid_shape (tuple): Grid shape as (num_patches_h, num_patches_w).
+
+        Returns:
+            MotifV1Output: Output dataclass containing reconstructed image and latent details.
+        '''
+        encoder_out = self.encoder(splited_image, grid_shape)
+        decoder_out = self.decoder(encoder_out.z_q, grid_shape)
+        
+        return MotifV1Output(
+            reconstructed_image=decoder_out.reconstructed_image,
+            z_q=encoder_out.z_q,
+            quantization_loss=encoder_out.loss,
+            indices=encoder_out.indices,
+            entropy=encoder_out.entropy,
+            perplexity=encoder_out.perplexity,
+            encoder_hidden_states=encoder_out.hidden_states,
+            decoder_hidden_states=decoder_out.hidden_states
+        )
