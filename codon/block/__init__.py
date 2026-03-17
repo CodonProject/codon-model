@@ -24,7 +24,7 @@ from .fusion import (
 from .lora import BasicLoRA, Conv1dLoRA, Conv2dLoRA, EmbeddingLoRA, LinearLoRA
 from .mlp import MLP
 from .moe import Expert, MoE, MoEInfo, MoEOutput
-from .pixelshuffle import PixelShuffleUpSample
+from .pixelshuffle import PixelShuffleUpSample, UnPixelShuffleDownSample
 from .transformer import (
     TransformerDecoderOutput,
     TransformerDenseDecoder,
@@ -74,7 +74,9 @@ __all__ = [
     'MoEOutput',
     # pixelshuffle
     'PixelShuffleUpSample',
+    'UnPixelShuffleDownSample',
     # transformer
+    '_TransformerDecoder',
     'TransformerDecoderOutput',
     'TransformerDenseDecoder',
     'TransformerMoEDecoder',

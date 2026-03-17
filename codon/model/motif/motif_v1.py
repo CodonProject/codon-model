@@ -357,8 +357,8 @@ class MotifV1(BasicModel):
         activation: str = 'relu',
         encoder_use_attention: bool = True,
         decoder_use_attention: bool = True,
-        encoder_depth_level: int = 10,
-        decoder_depth_level: int = 10
+        encoder_depth_level: int = 6,
+        decoder_depth_level: int = 6
     ) -> None:
         '''
         Initializes the MotifV1 model.
@@ -381,8 +381,8 @@ class MotifV1(BasicModel):
             activation (str): Activation function type. Defaults to 'relu'.
             encoder_use_attention (bool): Whether to use attention in encoder. Defaults to True.
             decoder_use_attention (bool): Whether to use attention in decoder. Defaults to True.
-            encoder_depth_level (int): Level of network depth multiplier for encoder. Defaults to 10.
-            decoder_depth_level (int): Level of network depth multiplier for decoder. Defaults to 10.
+            encoder_depth_level (int): Level of network depth multiplier for encoder. Defaults to 6.
+            decoder_depth_level (int): Level of network depth multiplier for decoder. Defaults to 6.
         '''
         super().__init__()
         
@@ -432,8 +432,8 @@ class MotifV1(BasicModel):
         Returns:
             MotifV1Output: Output dataclass containing reconstructed image and latent details.
         '''
-        encoder_out = self.encoder(splited_image, grid_shape)
-        decoder_out = self.decoder(encoder_out.z_q, grid_shape)
+        encoder_out: MotifV1EncoderOutput = self.encoder(splited_image, grid_shape)
+        decoder_out: MotifV1DecoderOutput = self.decoder(encoder_out.z_q, grid_shape)
         
         return MotifV1Output(
             reconstructed_image=decoder_out.reconstructed_image,
