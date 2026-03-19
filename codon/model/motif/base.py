@@ -160,6 +160,9 @@ class AutoencoderVisionModel(BasicModel):
     Attributes:
         gradient_checkpointing (bool): Whether gradient checkpointing is enabled.
     '''
+    def __init__(self):
+        super().__init__()
+        self.codebook_size: int = 0
 
     @staticmethod
     def compute_psnr(img1: torch.Tensor, img2: torch.Tensor, max_value: float = 1.0) -> torch.Tensor:

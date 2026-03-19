@@ -1,9 +1,6 @@
 import os
 import sys
 
-os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
-
-# Dynamically add the project root to the beginning of sys.path to prioritize local imports
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 
@@ -13,7 +10,7 @@ from PIL import Image
 
 from codon.model.motif.motif_v1 import MotifV1
 from codon.model.patch_disc import PatchDiscriminator
-from codon.kit.auto_vision_train import auto_train_motif_vision
+from codon.kit.train.vision import auto_vision_train
 
 
 def main() -> None:
@@ -33,9 +30,11 @@ def main() -> None:
     print('Initializing PatchDiscriminator...')
     discriminator = PatchDiscriminator.auto_build(
         in_channels=3,
-        hidden_dim=64,
+        hidden_dim=256,
         image_size=12
     ).to(device)
+
+    print(discriminator.count_params(human_readable=True))
 
     # Setup optimizers
     lr = 1e-4
@@ -60,9 +59,9 @@ def main() -> None:
         # Provide a dummy image tensor of size [3, H, W]
         image = torch.rand(3, 256, 256)
 
-    print('Starting auto_train_motif_vision step...')
+    print('Starting auto_vision_train step...')
     try:
-        output = auto_train_motif_vision(
+        output = auto_vision_train(
             model=model,
             discriminator=discriminator,
             optimizer_g=optimizer_g,
@@ -74,8 +73,7 @@ def main() -> None:
             perceptual_loss_fn=None,  # Not using LPIPS for basic test
             perceptual_weight=1.0,
             adv_weight=0.1,
-            quant_weight=1.0,
-            device=device
+            quant_weight=1.0
         )
 
         print('\n--- Training Step Successful ---')

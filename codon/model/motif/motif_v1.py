@@ -328,6 +328,7 @@ class MotifV1(AutoencoderVisionModel):
             decoder_depth_level (int): Level of network depth multiplier for decoder. Defaults to 6.
         '''
         super().__init__()
+        self.codebook_size = 2 ** codebook_dim
 
         self.rope_emb = rope_emb if isinstance(rope_emb, InterleavedRotaryEmbedding) and rope_emb.num_axes >= 2 else InterleavedRotaryEmbedding(
             model_dim=latent_dim // num_heads,
