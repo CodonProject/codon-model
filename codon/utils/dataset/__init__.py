@@ -4,6 +4,8 @@ from .image    import ImageDataset, TarImageDataset, ImageDatasetItem
 
 from .dataviewer import DataViewer, preview_fields
 
+from .conflux.base import ConfluxDataset
+
 __all__ = [
     'FlatDataset',
     'FlatColumnDataset',
@@ -15,5 +17,6 @@ __all__ = [
     'TarImageDataset',
     'ImageDatasetItem',
     'DataViewer',
-    'preview_fields'
+    'preview_fields',
+    'ConfluxDataset'
 ]

@@ -1,9 +1,3 @@
-'''
-Writer module for Conflux Dataset.
-
-This module provides the ConfluxWriter class to handle serialization,
-sharding, and writing data samples into the dataset.
-'''
 import os
 import io
 import json

@@ -5,6 +5,7 @@ from typing import List, Dict, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .writer import ConfluxWriter
+    from .reader import ConfluxReader
 
 @dataclass
 class DatasetInfo:
@@ -309,3 +310,7 @@ class ConfluxDataset:
         '''
         from .writer import ConfluxWriter
         return ConfluxWriter(self)
+    
+    def compose(self, task_name: str=None) -> 'ConfluxReader':
+        from .reader import ConfluxReader
+        return ConfluxReader(self, task_name=task_name)
