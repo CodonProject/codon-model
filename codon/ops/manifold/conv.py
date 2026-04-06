@@ -3,29 +3,30 @@ import torch
 try:
     import triton
     import triton.language as tl
+    import triton.language.extra.cuda.libdevice as libdevice
     JIT = True
 except ImportError:
     JIT = False
 
 if JIT:
     @triton.jit
-    def manifold_linear_fuse_kernel_forward(
+    def manifold_conv_fuse_kernel_forward(
         c_ptr, scale_ptr, bias_ptr, out_ptr,
         kappa_val, lambda_val,
-        n_elements, N,
+        n_elements, C, SPATIAL_SIZE,
         BLOCK_SIZE: tl.constexpr, RULE_IS_NEAR: tl.constexpr
     ):
         '''
         Forward pass fusion kernel.
-        Fuses clamp, acos, exp, attraction logic, and cosine projection.
+        Fuses clamp, acos, exp, attraction logic, and cosine projection for convolutions.
         '''
         pid = tl.program_id(axis=0)
         block_start = pid * BLOCK_SIZE
         offsets = block_start + tl.arange(0, BLOCK_SIZE)
         mask = offsets < n_elements
         
-        # Determine which feature (column) this thread is computing
-        feat_idx = offsets % N
+        # Determine which feature (channel) this thread is computing
+        feat_idx = (offsets // SPATIAL_SIZE) % C
 
         # Load data from HBM to SRAM
         c = tl.load(c_ptr + offsets, mask=mask)
@@ -37,7 +38,7 @@ if JIT:
         c_clamp = tl.minimum(c_clamp, 1.0 - 1e-6)
 
         # 2. Angle and Gravitational Field Calculation
-        theta = tl.acos(c_clamp)
+        theta = libdevice.acos(c_clamp)
         exp_val = tl.exp(kappa_val * (c_clamp - 1.0))
 
         if RULE_IS_NEAR:
@@ -58,22 +59,24 @@ if JIT:
         tl.store(out_ptr + offsets, out, mask=mask)
 
     @triton.jit
-    def manifold_linear_fuse_kernel_backward(
+    def manifold_conv_fuse_kernel_backward(
         grad_out_ptr, c_ptr, scale_ptr,
         grad_c_ptr, grad_k_ptr, grad_l_ptr, grad_s_ptr, grad_b_ptr,
         kappa_val, lambda_val,
-        n_elements, N,
+        n_elements, C, SPATIAL_SIZE,
         BLOCK_SIZE: tl.constexpr, RULE_IS_NEAR: tl.constexpr
     ):
         '''
-        Backward pass fusion kernel.
+        Backward pass fusion kernel for Convolution.
         Calculates exact analytical gradients without saving intermediate tensors.
         '''
         pid = tl.program_id(axis=0)
         block_start = pid * BLOCK_SIZE
         offsets = block_start + tl.arange(0, BLOCK_SIZE)
         mask = offsets < n_elements
-        feat_idx = offsets % N
+        
+        # For conv, shape is [B, C, H, W], so we find the channel index
+        feat_idx = (offsets // SPATIAL_SIZE) % C
 
         # Load gradients and saved tensors
         grad_out = tl.load(grad_out_ptr + offsets, mask=mask)
@@ -84,7 +87,7 @@ if JIT:
         c_clamp = tl.maximum(c, -1.0 + 1e-6)
         c_clamp = tl.minimum(c_clamp, 1.0 - 1e-6)
 
-        theta = tl.acos(c_clamp)
+        theta = libdevice.acos(c_clamp)
         exp_val = tl.exp(kappa_val * (c_clamp - 1.0))
 
         if RULE_IS_NEAR:
@@ -143,7 +146,7 @@ if JIT:
         tl.store(grad_b_ptr + offsets, grad_b, mask=mask)
 
 
-    class ManifoldLinearFuseFunction(torch.autograd.Function):
+    class ManifoldConvFuseFunction(torch.autograd.Function):
         @staticmethod
         def forward(ctx, cosine, kappa, lambda_rate, scale, bias, rule):
             cosine = cosine.contiguous()
@@ -152,15 +155,17 @@ if JIT:
 
             out = torch.empty_like(cosine)
             n_elements = cosine.numel()
-            N = cosine.size(-1)
+            
+            C = cosine.size(1)
+            SPATIAL_SIZE = cosine[0, 0].numel()
 
             grid = lambda meta: (triton.cdiv(n_elements, meta['BLOCK_SIZE']),)
             rule_is_near = (rule == 'near')
 
-            manifold_linear_fuse_kernel_forward[grid](
+            manifold_conv_fuse_kernel_forward[grid](
                 cosine, scale, bias, out,
                 kappa.item(), lambda_rate.item(),
-                n_elements, N,
+                n_elements, C, SPATIAL_SIZE,
                 BLOCK_SIZE=1024, RULE_IS_NEAR=rule_is_near
             )
 
@@ -182,15 +187,17 @@ if JIT:
             grad_b_grid = torch.empty_like(cosine)
 
             n_elements = cosine.numel()
-            N = cosine.size(-1)
+            C = cosine.size(1)
+            SPATIAL_SIZE = cosine[0, 0].numel()
+            
             grid = lambda meta: (triton.cdiv(n_elements, meta['BLOCK_SIZE']),)
             rule_is_near = (rule == 'near')
 
-            manifold_linear_fuse_kernel_backward[grid](
+            manifold_conv_fuse_kernel_backward[grid](
                 grad_out, cosine, scale,
                 grad_c, grad_k_grid, grad_l_grid, grad_s_grid, grad_b_grid,
                 kappa.item(), lambda_rate.item(),
-                n_elements, N,
+                n_elements, C, SPATIAL_SIZE,
                 BLOCK_SIZE=1024, RULE_IS_NEAR=rule_is_near
             )
 
@@ -203,7 +210,8 @@ if JIT:
             if l_val <= 1e-6 or l_val >= 1.0 - 1e-4:
                 grad_lambda.zero_()
 
-            grad_scale = grad_s_grid.sum(dim=0).view_as(scale)
-            grad_bias = grad_b_grid.sum(dim=0).view_as(bias)
+            # Conv specific reduction: sum over Batch (dim 0), H (dim 2), W (dim 3)
+            grad_scale = grad_s_grid.sum(dim=(0, 2, 3)).view_as(scale)
+            grad_bias = grad_b_grid.sum(dim=(0, 2, 3)).view_as(bias)
 
             return grad_c, grad_kappa, grad_lambda, grad_scale, grad_bias, None

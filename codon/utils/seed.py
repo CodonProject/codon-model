@@ -5,7 +5,7 @@ import os
 
 from typing import Any, Optional
 
-def seed_everything(seed: int = 42, strict: bool = False, warn_only: bool = True) -> None:
+def seed_everything(seed: int = 42, strict: bool = False, warn_only: bool = True, verbose: bool = True) -> None:
     '''
     Sets all random seeds to ensure reproducibility of PyTorch experiments.
 
@@ -18,6 +18,10 @@ def seed_everything(seed: int = 42, strict: bool = False, warn_only: bool = True
         warn_only (bool): If True, only warns when deterministic algorithms
             are not available. Defaults to True.
     '''
+    def _print(*args):
+        if not verbose: return
+        print(*args)
+
     import codon
     codon.__seed__ = seed
     random.seed(seed)
@@ -36,11 +40,11 @@ def seed_everything(seed: int = 42, strict: bool = False, warn_only: bool = True
         try:
             torch.use_deterministic_algorithms(True, warn_only=warn_only)
             os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
-            print(f'[Info] Strict deterministic mode enabled. (seed={seed})')
+            _print(f'[Info] Strict deterministic mode enabled. (seed={seed})')
         except AttributeError:
-            print('[Warning] torch.use_deterministic_algorithms is not available in your PyTorch version.')
+            _print('[Warning] torch.use_deterministic_algorithms is not available in your PyTorch version.')
     else:
-        print(f'[Info] Random seed set as {seed}')
+        _print(f'[Info] Random seed set as {seed}')
 
 def get_seed() -> Optional[int]:
     '''
