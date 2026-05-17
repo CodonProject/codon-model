@@ -2,7 +2,7 @@ import torch
 from typing import Any, Dict, Iterable, Iterator, List, Union
 
 from codon.utils.data.base import CodonDataset, CodonIterableDataset
-from .prev1 import MotifPrev1
+from codon.motif.data import MotifPrev1
 
 
 class ChunkedTokenStream(CodonIterableDataset):

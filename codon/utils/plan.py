@@ -1,8 +1,9 @@
 import math
 import numpy as np
+from codon.utils.data import ChunkedTokenStream, CodonDataset, Stateful
 from codon.base import BasicModel
 from dataclasses import dataclass
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Union, Iterable, Optional
 
 @dataclass
 class TrainingStepsConfig:
@@ -119,11 +120,39 @@ class Stage:
     tokens: int
     steps: int
 
+    def build_stream(
+        self, 
+        data: Union[Iterable[Any], CodonDataset], 
+        eos_token_id: int
+    ) -> ChunkedTokenStream:
+        return ChunkedTokenStream(
+            data=data,
+            chunk_len=self.chunk_len,
+            batch_size=self.batch_size,
+            seq_len=self.seq_len,
+            eos_token_id=eos_token_id
+        )
+
 @dataclass
 class TrainingPlan:
     total_tokens: int
     total_steps: int
     stages: List[Stage]
+    step_mode: str
+
+    def print_report(self) -> 'TrainingPlan':
+        print('=' * 70)
+        print(f' LLM Context Training Plan | Strategy: [{self.step_mode.upper()}]')
+        print('=' * 70)
+        print(f'Total Budget: {self.total_tokens / 1e9:,.3f} B Tokens | Total Steps: {self.total_steps:,}')
+        print('-' * 70)
+        
+        for i, s in enumerate(self.stages):
+            print(f'➜ [{i+1}] {s.name:<18} | Seq (sample_size)={s.sample_size:<5} | '
+                  f'BS (batch_size)={s.batch_size:<4} | Tokens: {s.tokens/1e9:>5.3f}B | Steps: {s.steps:>8,}')
+        
+        print('=' * 70)
+        return self
 
 
 class ContextTrainingPlanner:
@@ -149,16 +178,19 @@ class ContextTrainingPlanner:
             curr *= 2
         return lengths
 
-    def _create_stage(self, name: str, sample_size: int, target_tokens: int) -> Stage:
-        batch_size = max(1, self.global_batch_tokens // sample_size)
+    def _create_stage(self, name: str, seq_len: int, target_tokens: int) -> Stage:
+        effective_len = seq_len + 1
         
-        tokens_per_step = batch_size * sample_size
-        steps = math.ceil(target_tokens / tokens_per_step)
+        batch_size = max(1, self.global_batch_tokens // effective_len)
+        chunk_len = batch_size * effective_len
+        
+        steps = math.ceil(target_tokens / chunk_len)
         
         return Stage(
             name=name,
-            sample_size=sample_size,
+            seq_len=seq_len,
             batch_size=batch_size,
+            chunk_len=chunk_len,
             tokens=target_tokens,
             steps=steps
         )
@@ -213,33 +245,67 @@ class ContextTrainingPlanner:
         return TrainingPlan(
             total_tokens=total_tokens,
             total_steps=total_steps,
-            stages=stages
+            stages=stages,
+            step_mode=self.step_mode
         )
-    
-    def print_report(self, plan: TrainingPlan):
-        print('=' * 70)
-        print(f' LLM Context Training Plan | Strategy: [{self.step_mode.upper()}]')
-        print('=' * 70)
-        print(f'Total Budget: {plan.total_tokens / 1e9:,.3f} B Tokens | Total Steps: {plan.total_steps:,}')
-        print('-' * 70)
+
+
+class StatefulPlanRunner(Stateful):
+    def __init__(self, plan: TrainingPlan, data: Any, eos_token_id: int):
+        self.plan = plan
+        self.data = data
+        self.eos_token_id = eos_token_id
         
-        for i, s in enumerate(plan.stages):
-            print(f'➜ [{i+1}] {s.name:<18} | Seq (sample_size)={s.sample_size:<5} | '
-                  f'BS (batch_size)={s.batch_size:<4} | Tokens: {s.tokens/1e9:>5.3f}B | Steps: {s.steps:>8,}')
+        self.current_stage_idx: int = 0
+        self.step_within_stage: int = 0
         
-        print('=' * 70)
+        self._active_stream: Optional[ChunkedTokenStream] = None
+        self._active_iterator = None
 
+    def _init_stage_stream(self, stage_idx: int):
+        stage = self.plan.stages[stage_idx]
+        self._active_stream = stage.build_stream(self.data, self.eos_token_id)
+        dataset_wrapper = self._active_stream.compose(seek=0)
+        self._active_iterator = iter(dataset_wrapper)
 
-if __name__ == '__main__':
-    class MockModel:
-        def count_params(self): return 105_484_032
+    def state_dict(self) -> Dict[str, Any]:
+        state = {
+            'current_stage_idx': self.current_stage_idx,
+            'step_within_stage': self.step_within_stage,
+        }
+        if self._active_stream is not None:
+            state['stream_state'] = self._active_stream.state_dict()
+        return state
 
-    planner = ContextTrainingPlanner(
-        model=MockModel(),
-        step_mode='recommended',
-        base_context=512,
-        target_context=8192
-    )
-    
-    plan = planner.generate_plan()
-    planner.print_report(plan)
+    def load_state_dict(self, state: Dict[str, Any]) -> None:
+        self.current_stage_idx = state.get('current_stage_idx', 0)
+        self.step_within_stage = state.get('step_within_stage', 0)
+        
+        if self.current_stage_idx < len(self.plan.stages):
+            self._init_stage_stream(self.current_stage_idx)
+            if 'stream_state' in state and self._active_stream is not None:
+                self._active_stream.load_state_dict(state['stream_state'])
+                dataset_wrapper = self._active_stream.compose(seek=0)
+                self._active_iterator = iter(dataset_wrapper)
+
+    def __iter__(self):
+        if self._active_stream is None and self.current_stage_idx < len(self.plan.stages):
+            self._init_stage_stream(self.current_stage_idx)
+
+        while self.current_stage_idx < len(self.plan.stages):
+            current_stage = self.plan.stages[self.current_stage_idx]
+            
+            while self.step_within_stage < current_stage.steps:
+                try:
+                    inputs, labels = next(self._active_iterator)
+                    
+                    yield current_stage, inputs, labels
+                    
+                    self.step_within_stage += 1
+                except StopIteration:
+                    self._init_stage_stream(self.current_stage_idx)
+            
+            self.current_stage_idx += 1
+            self.step_within_stage = 0
+            if self.current_stage_idx < len(self.plan.stages):
+                self._init_stage_stream(self.current_stage_idx)
