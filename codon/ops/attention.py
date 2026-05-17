@@ -13,6 +13,11 @@ try:
 except ImportError:
     FLA_ENABLA = False
 
+try:
+    from flash_attn import flash_attn_func
+    FLASH_ATTN_AVAILABLE = True
+except ImportError:
+    FLASH_ATTN_AVAILABLE = False
 
 @dataclass
 class AttentionOutput:
@@ -54,6 +59,22 @@ def apply_attention(
     Returns:
         AttentionOutput: Object containing attention output and optional weights.
     '''
+    
+    if (
+        FLASH_ATTN_AVAILABLE 
+        and query_states.is_cuda
+        and query_states.dtype in [torch.float16, torch.bfloat16]
+        and not output_attentions
+        and attention_mask is None
+    ):
+        q = query_states.transpose(1, 2)
+        k = key_states.transpose(1, 2)
+        v = value_states.transpose(1, 2)
+        
+        out = flash_attn_func(q, k, v, dropout_p=dropout, causal=bool(is_causal))
+        
+        output = out.transpose(1, 2)
+        return AttentionOutput(output=output, attention_weights=None)
     
     if attention_mask is not None:
         if attention_mask.dtype != torch.float32:

@@ -7,8 +7,8 @@ from typing import Optional, Sequence
 import torch
 
 from codon.utils.data.base import CodonDataset
-from codon.utils.session import Session
-from codon.utils.tokens import PackedTokenizer
+from codon.utils.session   import Session
+from codon.utils.tokens    import PackedTokenizer
 
 
 _DEFAULT_SYSTEM_PROMPTS = [

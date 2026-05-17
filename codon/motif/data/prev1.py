@@ -1,10 +1,11 @@
 from codon.utils.data.base import CodonDataset
-from transformers import PreTrainedTokenizerFast
 from codon.utils.tokens import PackedTokenizer
+from transformers import PreTrainedTokenizerFast
 
 import os
 import bisect
 import pyarrow.parquet as pq
+
 from pathlib import Path
 from typing  import Any, Optional, Dict, Union
 from tqdm    import tqdm
