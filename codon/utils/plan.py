@@ -115,7 +115,8 @@ def calculate_training_schedule(params: ContextTrainingParams, target_len: int) 
 @dataclass
 class Stage:
     name: str
-    sample_size: int
+    seq_len: int
+    chunk_len: int
     batch_size: int
     tokens: int
     steps: int
@@ -142,14 +143,16 @@ class TrainingPlan:
 
     def print_report(self) -> 'TrainingPlan':
         print('=' * 70)
-        print(f' LLM Context Training Plan | Strategy: [{self.step_mode.upper()}]')
+        print(f'LLM Context Training Plan | Strategy: [{self.step_mode.upper()}]')
         print('=' * 70)
         print(f'Total Budget: {self.total_tokens / 1e9:,.3f} B Tokens | Total Steps: {self.total_steps:,}')
         print('-' * 70)
         
         for i, s in enumerate(self.stages):
-            print(f'➜ [{i+1}] {s.name:<18} | Seq (sample_size)={s.sample_size:<5} | '
-                  f'BS (batch_size)={s.batch_size:<4} | Tokens: {s.tokens/1e9:>5.3f}B | Steps: {s.steps:>8,}')
+            print(
+                f'➜ [{i+1}] {s.name:<18} | Seq_{s.seq_len:<5} | '
+                f'BS (batch_size)={s.batch_size:<4} | Tokens: {s.tokens/1e9:>5.3f}B | Steps: {s.steps:>8,}'
+            )
         
         print('=' * 70)
         return self
@@ -216,7 +219,7 @@ class ContextTrainingPlanner:
         f_tokens = int(stages_info[0]['allocated_tokens_B'] * 1e9)
         stages.append(self._create_stage(
             name='Foundation', 
-            sample_size=self.base_context, 
+            seq_len=self.base_context, 
             target_tokens=f_tokens
         ))
         
@@ -228,7 +231,7 @@ class ContextTrainingPlanner:
             for i, c_len in enumerate(exp_lengths):
                 stages.append(self._create_stage(
                     name=f'Expansion_{c_len}', 
-                    sample_size=c_len, 
+                    seq_len=c_len, 
                     target_tokens=tokens_per_exp
                 ))
                 
@@ -236,7 +239,7 @@ class ContextTrainingPlanner:
         s_tokens = int(stages_info[2]['allocated_tokens_B'] * 1e9)
         stages.append(self._create_stage(
             name='Stabilization', 
-            sample_size=self.target_context, 
+            seq_len=self.target_context, 
             target_tokens=s_tokens
         ))
 

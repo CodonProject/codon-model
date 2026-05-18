@@ -5,19 +5,6 @@ import math
 from dataclasses import dataclass
 from typing      import Optional, Tuple
 
-try:
-    from fla.ops.linear_attn import chunk_linear_attn as _fla_chunk_linear_attn
-    from fla.ops.gla import chunk_gla as _fla_chunk_gla
-    import triton
-    FLA_ENABLA = True
-except ImportError:
-    FLA_ENABLA = False
-
-try:
-    from flash_attn import flash_attn_func
-    FLASH_ATTN_AVAILABLE = True
-except ImportError:
-    FLASH_ATTN_AVAILABLE = False
 
 @dataclass
 class AttentionOutput:
@@ -59,23 +46,6 @@ def apply_attention(
     Returns:
         AttentionOutput: Object containing attention output and optional weights.
     '''
-    
-    if (
-        FLASH_ATTN_AVAILABLE 
-        and query_states.is_cuda
-        and query_states.dtype in [torch.float16, torch.bfloat16]
-        and not output_attentions
-        and attention_mask is None
-    ):
-        q = query_states.transpose(1, 2)
-        k = key_states.transpose(1, 2)
-        v = value_states.transpose(1, 2)
-        
-        out = flash_attn_func(q, k, v, dropout_p=dropout, causal=bool(is_causal))
-        
-        output = out.transpose(1, 2)
-        return AttentionOutput(output=output, attention_weights=None)
-    
     if attention_mask is not None:
         if attention_mask.dtype != torch.float32:
             attention_mask = attention_mask.float()
@@ -128,89 +98,3 @@ def apply_attention(
     output = torch.matmul(attention_weights, value_states)
     
     return AttentionOutput(output=output, attention_weights=attention_weights)
-
-
-def _chunk_linear_attn_native(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    v: torch.Tensor,
-    scale: float = 1.0,
-    initial_state: torch.Tensor = None,
-    output_final_state: bool = False
-):
-    B, H, L, D = q.shape
-    V_dim = v.shape[-1]
-    
-    orig_dtype = q.dtype
-    
-    q = (q * scale).to(torch.float32)
-    k = k.to(torch.float32)
-    v = v.to(torch.float32)
-    
-    if initial_state is not None:
-        state = initial_state.to(torch.float32).clone()
-    else:
-        state = torch.zeros(B, H, D, V_dim, device=q.device, dtype=torch.float32)
-        
-    output = torch.empty_like(v)
-    
-    for t in range(L):
-        q_t = q[:, :, t, :]
-        k_t = k[:, :, t, :]
-        v_t = v[:, :, t, :]
-        
-        # State: [B, H, D, V_dim]
-        state = state + torch.einsum('bhd,bhv->bhdv', k_t, v_t)
-        # O: [B, H, V_dim]
-        output[:, :, t, :] = torch.einsum('bhd,bhdv->bhv', q_t, state)
-        
-    return output.to(orig_dtype), (state if output_final_state else None)
-
-
-def _chunk_gla_native(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    v: torch.Tensor,
-    g: torch.Tensor,
-    scale: float = 1.0,
-    initial_state: torch.Tensor = None,
-    output_final_state: bool = False
-):
-    B, H, L, D = q.shape
-    V_dim = v.shape[-1]
-    
-    orig_dtype = q.dtype
-    
-    q = (q * scale).to(torch.float32)
-    k = k.to(torch.float32)
-    v = v.to(torch.float32)
-    
-    decay = torch.exp(g.to(torch.float32))
-    if decay.dim() == 3:
-        decay = decay.unsqueeze(-1)
-        
-    if initial_state is not None:
-        state = initial_state.to(torch.float32).clone()
-    else:
-        state = torch.zeros(B, H, D, V_dim, device=q.device, dtype=torch.float32)
-        
-    output = torch.empty_like(v)
-    
-    for t in range(L):
-        q_t = q[:, :, t, :]
-        k_t = k[:, :, t, :]
-        v_t = v[:, :, t, :]
-        d_t = decay[:, :, t, :]  # [B, H, 1]
-        
-        # State = State * decay + K^T * V
-        state = state * d_t.unsqueeze(-1) + torch.einsum('bhd,bhv->bhdv', k_t, v_t)
-        output[:, :, t, :] = torch.einsum('bhd,bhdv->bhv', q_t, state)
-        
-    return output.to(orig_dtype), (state if output_final_state else None)
-
-if FLA_ENABLA:
-    chunk_linear_attn: callable = _fla_chunk_linear_attn
-    chunk_gla: callable = _fla_chunk_gla
-else:
-    chunk_linear_attn: callable = _chunk_linear_attn_native
-    chunk_gla: callable = _chunk_gla_native

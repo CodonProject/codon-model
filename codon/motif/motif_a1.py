@@ -6,7 +6,6 @@ from codon.block.embedding   import RotaryEmbedding
 from .base import CausalLanguageModel, CausalLanguageModelOutput
 
 from typing import Optional, List, Tuple
-from dataclasses import dataclass
 
 
 class MotifA1(CausalLanguageModel):
@@ -35,7 +34,7 @@ class MotifA1(CausalLanguageModel):
                 use_swiglu=True,
                 dropout=dropout,
                 attn_bias=False,
-                attn_type='mha' if (idx + 1) % 4 == 0 else 'gla',
+                attn_type='mha',
                 idx=str(idx)
             )
             for idx in range(num_layers)
