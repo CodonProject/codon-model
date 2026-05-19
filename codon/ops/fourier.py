@@ -18,11 +18,16 @@ def apply_fourier_mixing(x_v: torch.Tensor, x_g: torch.Tensor, seq_len: int) -> 
     
     N = 2 * seq_len
     
-    V_fft = torch.fft.rfft(x_v.to(torch.float32), n=N, dim=2)
-    G_fft = torch.fft.rfft(x_g.to(torch.float32), n=N, dim=2)
+    x_v_T = x_v.transpose(-1, -2).contiguous().to(torch.float32)
+    x_g_T = x_g.transpose(-1, -2).contiguous().to(torch.float32)
+    
+    V_fft = torch.fft.rfft(x_v_T, n=N, dim=-1)
+    G_fft = torch.fft.rfft(x_g_T, n=N, dim=-1)
     
     X_fft = V_fft * G_fft
     
-    x_mixed = torch.fft.irfft(X_fft, n=N, dim=2)
+    x_mixed_T = torch.fft.irfft(X_fft, n=N, dim=-1)
+    
+    x_mixed = x_mixed_T.transpose(-1, -2)
     
     return x_mixed[:, :, :seq_len, :].to(orig_dtype)

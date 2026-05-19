@@ -2,7 +2,7 @@ import os
 import shutil
 import argparse
 
-def clean_pycache(target_dir: str):
+def clear_pycache(target_dir: str):
     '''
     递归遍历并删除目标路径下的所有 __pycache__ 文件夹。
     
@@ -38,4 +38,4 @@ def main():
         print(f'错误: 目录不存在 - {args.target_path}')
         return
 
-    clean_pycache(args.target_path)
+    clear_pycache(args.target_path)

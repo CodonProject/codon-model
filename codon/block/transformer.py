@@ -4,7 +4,8 @@ from typing import Union, Optional, Tuple
 
 from codon.utils.safecode  import safecode
 from codon.block.embedding import BasicEmbedding
-from codon.block.attention import MultiHeadAttention, AttentionOutput, LinearAttention, GatedLinearAttention
+from codon.block.attention import MultiHeadAttention, AttentionOutput
+from codon.block.fourier   import MultiHeadFourier
 from codon.block.mlp       import MLP
 from codon.block.moe       import MoE, MoEOutput
 
@@ -116,28 +117,12 @@ class _TransformerDecoder(BasicModel):
                 bias=attn_bias
             )
 
-        elif self.attn_type == 'linear':
-            self.attn = LinearAttention(
+        elif self.attn_type in ['fourier', 'mhf']:
+            self.attn = MultiHeadFourier(
                 hidden_size=model_dim,
-                num_heads=num_heads,
-                num_kv_heads=num_kv_heads,
-                use_qk_norm=use_qk_norm,
-                use_gate=use_attn_gate,
-                dropout=dropout,
-                is_causal=True,
-                bias=attn_bias
+                num_heads=num_heads
             )
 
-        elif self.attn_type in ['gated_linear', 'gla']:
-            self.attn = GatedLinearAttention(
-                hidden_size=model_dim,
-                num_heads=num_heads,
-                num_kv_heads=num_kv_heads,
-                use_qk_norm=use_qk_norm,
-                dropout=dropout,
-                is_causal=True,
-                bias=attn_bias
-            )
         else:
             raise ValueError(f"Unsupported attn_type: {attn_type}. Choose from 'multihead', 'linear', or 'gated_linear'.")
 

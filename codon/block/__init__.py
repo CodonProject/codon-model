@@ -36,6 +36,7 @@ from .manifold import (
     BasicManifoldLinear, RiemannianManifoldLinear,
     BasicManifoldConv2d, RiemannianManifoldConv2d
 )
+from .fourier import MultiHeadFourier
 
 __all__ = [
     # attention
@@ -90,5 +91,7 @@ __all__ = [
     'BasicManifoldLinear',
     'RiemannianManifoldLinear',
     'BasicManifoldConv2d',
-    'RiemannianManifoldConv2d'
+    'RiemannianManifoldConv2d',
+    # Fourier
+    'MultiHeadFourier',
 ]

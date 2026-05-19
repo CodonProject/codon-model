@@ -2,7 +2,7 @@ import argparse
 import os
 
 from codon.dev.hash import hash_target
-from codon.dev.clean import clean_pycache
+from codon.dev.clear import clear_pycache
 
 def handle_hash(args):
     '''处理 codon hash 命令'''
@@ -15,12 +15,12 @@ def handle_hash(args):
     except Exception as e:
         print(f'发生意外错误: {e}')
 
-def handle_clean(args):
-    '''处理 codon clean 命令'''
+def handle_clear(args):
+    '''处理 codon clear 命令'''
     if not os.path.isdir(args.target_path):
         print(f'错误: 目录不存在 - {args.target_path}')
         return
-    clean_pycache(args.target_path)
+    clear_pycache(args.target_path)
 
 def main():
     parser = argparse.ArgumentParser(
@@ -35,11 +35,11 @@ def main():
     parser_hash.add_argument('filename_or_dirname', type=str, help='需要计算 MD5 的文件或文件夹路径')
     parser_hash.set_defaults(func=handle_hash)
 
-    # codon clean
-    parser_clean = subparsers.add_parser('clean', help='递归清理目录下的所有 __pycache__ 缓存')
-    parser_clean.add_argument('target_path', type=str, nargs='?', default='.', 
+    # codon clear
+    parser_clear = subparsers.add_parser('clear', help='递归清理目录下的所有 __pycache__ 缓存')
+    parser_clear.add_argument('target_path', type=str, nargs='?', default='.', 
                               help='要清理的根目录路径 (默认为当前所在目录)')
-    parser_clean.set_defaults(func=handle_clean)
+    parser_clear.set_defaults(func=handle_clear)
 
     args = parser.parse_args()
     args.func(args)
