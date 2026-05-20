@@ -45,7 +45,8 @@ def main():
     try:
         results = hash_target(args.target)
         for path, md5_val in results.items():
-            print(f'{md5_val}    {path.replace('\\', '/')}')
+            path = path.replace('\\', '/')
+            print(f'{md5_val} ➜ {path}')
     except ValueError as e:
         print(e)
 

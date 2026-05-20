@@ -130,7 +130,7 @@ class Session:
         self.policy[self._ROLE_ALIAS.get(role, role)] = policy
         return self
 
-    def _encode_message(self, message: dict, tokenize: bool=False) -> list[int]:
+    def _encode_message(self, message: dict) -> list[int]:
         msg = copy.deepcopy(message)
         role = self._ROLE_ALIAS.get(msg.get('role', 'user'), msg.get('role', 'user'))
         msg['role'] = role
@@ -140,7 +140,7 @@ class Session:
         return self.tokenizer.apply_chat_template(
             [msg],
             add_generation_prompt=False,
-            tokenize=tokenize
+            tokenize=True,
         )
 
     def _apply_policy(self, msg: Message, policy: MaskPolicy) -> None:
@@ -216,7 +216,7 @@ class Session:
     def add_generation_prompt(
         self,
         enable_thinking: bool = False,
-        disable_thinking: bool = False,
+        disable_thinking: bool = False
     ) -> 'Session':
         if enable_thinking and disable_thinking:
             raise ValueError('enable_thinking and disable_thinking cannot both be True')

@@ -278,15 +278,21 @@ class PackedTokenizer:
             if 'content' in msg:
                 msg['content'] = self._sanitize_content(msg['content'])
         
-        raw_ids = self.fast_tokenizer.apply_chat_template(
+        kwargs.pop('tokenize', None)
+        
+        raw = self.fast_tokenizer.apply_chat_template(
             safe_messages,
             add_generation_prompt=add_generation_prompt,
             tokenize=True,
             **kwargs
         )
         
-        clean_ids = [tid for tid in raw_ids if tid != escape_id]
-        return clean_ids
+        if isinstance(raw, dict) or hasattr(raw, 'input_ids'):
+            raw = raw['input_ids']
+        if raw and isinstance(raw[0], list):
+            raw = raw[0]
+        
+        return [tid for tid in raw if tid != escape_id]
 
     def encode(self, text: str, add_special_tokens: bool = False, **kwargs) -> List[int]:
         escape_id = self.ensure_escape()

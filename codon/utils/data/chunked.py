@@ -1,8 +1,9 @@
 import torch
-from typing import Any, Dict, Iterable, Iterator, List, Union
+from typing import Any, Dict, Iterable, Iterator, List, Union, TYPE_CHECKING
 
 from codon.utils.data.base import CodonDataset, CodonIterableDataset
-from codon.motif.data import MotifPrev1
+if TYPE_CHECKING:
+    from codon.motif.data import MotifPrev1
 
 
 class ChunkedTokenStream(CodonIterableDataset):
@@ -28,7 +29,7 @@ class ChunkedTokenStream(CodonIterableDataset):
 
     def __init__(
         self,
-        data: Union[Iterable[Any], MotifPrev1, CodonDataset],
+        data: Union[Iterable[Any], 'MotifPrev1', CodonDataset],
         chunk_len: int,
         batch_size: int,
         seq_len: int,

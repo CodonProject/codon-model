@@ -214,3 +214,5 @@ test_dataset/
 .trae/
 
 checkpoint/
+sft/
+motif.vocab
