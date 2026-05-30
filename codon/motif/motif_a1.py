@@ -21,6 +21,7 @@ class MotifA1(CausalLanguageModel):
     ):
         super().__init__()
         self.vocab_size = vocab_size
+        self.model_dim = model_dim
         self.token_emb = nn.Embedding(vocab_size, model_dim)
         self.position_emb = RotaryEmbedding(model_dim // num_heads)
         self.dropout = nn.Dropout(dropout)

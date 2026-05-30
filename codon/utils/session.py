@@ -5,13 +5,14 @@ import copy
 import torch
 import json
 
-MaskPolicy = Union[Literal['all', 'none', 'content', 'thought', 'fim'], Sequence[bool]]
+MaskPolicy = Union[Literal['all', 'none', 'content', 'thought', 'answer', 'fim'], Sequence[bool]]
 
 @dataclass
 class Message:
     ids: list[int]
     ignore_mask: list[bool] = field(default_factory=list)
     role: Optional[str] = None
+    images: list[torch.Tensor] = field(default_factory=list)
 
     def __post_init__(self):
         if not self.ignore_mask:
@@ -94,8 +95,9 @@ class Session:
         'developer': 'system',
     }
 
-    def __init__(self, tokenizer: PackedTokenizer):
+    def __init__(self, tokenizer: PackedTokenizer, patch_size: int = 12):
         self.tokenizer = tokenizer
+        self.patch_size = patch_size
         self.messages: list[Message] = []
 
         self._tokens = {
@@ -106,6 +108,8 @@ class Session:
             'cot_start': '[cot_start]', 'cot_end': '[cot_end]',
             'fim_pre': '[fim_pre]', 'fim_mid': '[fim_mid]', 'fim_suf': '[fim_suf]',
             'pad': '[pad]',
+            'image_start': '[image_start]', 'image_end': '[image_end]',
+            'image_patch': '[unused_43]',
         }
         self._ids: dict[str, Optional[int]] = {}
         self._resolve_specials()
@@ -171,6 +175,19 @@ class Session:
             e = msg.find(e_id, max(s, 0))
             if s >= 0 and e > s:
                 msg.unmask_between(s, e, include_boundaries=(False, False))
+        elif policy == 'answer':
+            msg.mask_all()
+            cot_end_id = self._ids.get('cot_end')
+            im_end_id = self._ids.get('im_end')
+            
+            cot_end_idx = msg.find(cot_end_id) if cot_end_id is not None else -1
+            im_end_idx = msg.find_last(im_end_id) if im_end_id is not None else -1
+            if im_end_idx >= 0:
+                model_id = self._ids.get('model')
+                fallback_idx = msg.find(model_id) if model_id is not None else 0
+                start_idx = cot_end_idx if cot_end_idx >= 0 else fallback_idx
+                if start_idx >= 0 and im_end_idx > start_idx:
+                    msg.unmask_between(start_idx, im_end_idx, include_boundaries=(False, True))
         elif policy == 'fim':
             msg.mask_all()
             mid_id = self._ids.get('fim_mid')
@@ -183,6 +200,49 @@ class Session:
                 msg.unmask_between(mid_idx, end_idx, include_boundaries=(True, True))
         else:
             raise ValueError(f'unknown mask policy: {policy!r}')
+
+    def _expand_image_patches(self, msg: Message) -> None:
+        '''
+        扫描 Token 序列，在 [image_start] 和 [image_end] 之间插入动态计算的 [image_patch] 数量，
+        并确保插入的 Patch 的 ignore_mask 为 True (避免对图像特征计算语言模型 loss)
+        '''
+        start_id = self._ids.get('image_start')
+        end_id = self._ids.get('image_end')
+        patch_id = self._ids.get('image_patch') or self._ids.get('pad')
+
+        if start_id is None or end_id is None:
+            return
+
+        new_ids = []
+        new_mask = []
+        img_idx = 0
+
+        i = 0
+        n = len(msg.ids)
+        while i < n:
+            if msg.ids[i] == start_id and i + 1 < n and msg.ids[i+1] == end_id:
+                new_ids.append(start_id)
+                new_mask.append(msg.ignore_mask[i])
+
+                if img_idx < len(msg.images):
+                    img = msg.images[img_idx]
+                    h, w = img.shape[-2], img.shape[-1]
+                    num_patches = (h // self.patch_size) * (w // self.patch_size)
+
+                    new_ids.extend([patch_id] * num_patches)
+                    new_mask.extend([True] * num_patches)
+                    img_idx += 1
+
+                new_ids.append(end_id)
+                new_mask.append(msg.ignore_mask[i+1])
+                i += 2
+            else:
+                new_ids.append(msg.ids[i])
+                new_mask.append(msg.ignore_mask[i])
+                i += 1
+
+        msg.ids = new_ids
+        msg.ignore_mask = new_mask
 
     def _pop_gen_prompt(self) -> Optional[Message]:
         if self.messages and self.messages[-1].role == '__gen_prompt__':
@@ -202,9 +262,21 @@ class Session:
         if 'tool_calls' in message.keys() and isinstance(message['tool_calls'], str):
             message['tool_calls'] = json.loads(message['tool_calls'])
         role = self._ROLE_ALIAS.get(message.get('role', 'user'), message.get('role', 'user'))
+
+        images = []
+        content = message.get('content')
+        if isinstance(content, list):
+            for item in content:
+                if isinstance(item, dict) and item.get('type') == 'image':
+                    if 'image' in item and isinstance(item['image'], torch.Tensor):
+                        images.append(item['image'])
+
         ids = self._encode_message(message)
-        msg = Message(ids=ids, role=role)
+        msg = Message(ids=ids, role=role, images=images)
         self._apply_policy(msg, mask if mask is not None else self.policy.get(role, 'all'))
+
+        if images: self._expand_image_patches(msg)
+
         self._append(msg)
         return self
 
@@ -297,17 +369,38 @@ class Session:
         lbl = self.labels
         att = [1] * len(ids)
 
+        patch_id = self._ids.get('image_patch')
+
         if pad_to is not None and len(ids) < pad_to:
-            pad_id = self._ids.get('pad') or 0
+            pad_id_token = self._ids.get('pad') or 0
             delta = pad_to - len(ids)
-            ids += [pad_id] * delta
+            ids += [pad_id_token] * delta
             lbl += [-100] * delta
             att += [0] * delta
 
         t = lambda xs: torch.tensor(xs, dtype=torch.long, device=device)
-        out = {'input_ids': t(ids), 'labels': t(lbl), 'attention_mask': t(att)}
+        
+        patch_indices = [idx for idx, tid in enumerate(ids) if tid == patch_id]
+
+        out = {
+            'input_ids': t(ids), 
+            'labels': t(lbl), 
+            'attention_mask': t(att),
+            'image_patch_indices': t(patch_indices)
+        }
+
+        all_images = []
+        for m in self.messages:
+            all_images.extend(m.images)
+        
+        out['images'] = [img.to(device) for img in all_images]
+
         if batch_dim:
-            out = {k: v.unsqueeze(0) for k, v in out.items()}
+            out['input_ids'] = out['input_ids'].unsqueeze(0)
+            out['labels'] = out['labels'].unsqueeze(0)
+            out['attention_mask'] = out['attention_mask'].unsqueeze(0)
+            out['image_patch_indices'] = out['image_patch_indices'].unsqueeze(0)
+
         return out
 
     def decode(self, skip_special_tokens: bool = False) -> str:

@@ -3,6 +3,7 @@ from codon.base import *
 from typing import Optional, List, Tuple, Union
 from dataclasses import dataclass
 import torch.nn.functional as F
+import json
 
 
 @dataclass
@@ -305,3 +306,58 @@ class AutoencoderVisionModel(BasicModel):
 
     def _decode(self, encoder_output: AutoVisionEncoderOutput) -> AutoVisionDecoderOutput:
         raise NotImplementedError('Subclasses must implement _decode method')
+
+
+class VisionEmbedding(BasicModel):
+    def __init__(
+        self, 
+        hidden_dim: int, 
+        dead_codes: Union[List[int], str],
+        codebook_dim: int = 15,
+        vision_model: Optional[AutoencoderVisionModel] = None
+    ):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.codebook_dim = codebook_dim
+        self.original_vocab_size = 2 ** codebook_dim
+        
+        self.vision_model = vision_model
+        
+        if isinstance(dead_codes, str):
+            with open(dead_codes, 'r', encoding='utf-8') as f:
+                data: dict = json.load(f)
+                dead_codes_list = data.get('dead_codes', [])
+        else:
+            dead_codes_list = dead_codes
+            
+        dead_codes_set = set(dead_codes_list)
+        
+        self.effective_vocab_size = self.original_vocab_size - len(dead_codes_set) + 1
+        self.embedding = nn.Embedding(self.effective_vocab_size, hidden_dim)
+        
+        mapping = torch.full((self.original_vocab_size,), self.effective_vocab_size - 1, dtype=torch.long)
+        
+        active_codes = [i for i in range(self.original_vocab_size) if i not in dead_codes_set]
+        for new_idx, old_idx in enumerate(active_codes):
+            mapping[old_idx] = new_idx
+            
+        self.register_buffer('index_mapping', mapping)
+    
+    def forward(self, original_indices: torch.Tensor) -> torch.Tensor:
+        mapped_indices = self.index_mapping[original_indices]
+        return self.embedding(mapped_indices)
+    
+    @torch.no_grad()
+    @torch.compiler.disable
+    def embed_image(self, image: torch.Tensor) -> torch.Tensor:
+        if self.vision_model is None:
+            raise ValueError
+        
+        self.vision_model.eval()
+        
+        enc_out = self.vision_model.encode(image)
+        
+        batch_size = image.size(0)
+        indices = enc_out.indices.view(batch_size, -1)
+        
+        return self.forward(indices)

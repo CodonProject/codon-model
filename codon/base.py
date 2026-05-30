@@ -62,6 +62,10 @@ class BasicModel(nn.Module):
             )
         return function(*args, **kwargs)
     
+    @property
+    def trainable_params(self) -> Iterator[torch.nn.Parameter]:
+        return self.get_params(trainable_only=True)
+    
     def get_params(self, trainable_only:bool=False) -> Iterator[torch.nn.Parameter]:
         '''
         Get an iterator over the model parameters.
