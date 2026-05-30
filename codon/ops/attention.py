@@ -46,17 +46,16 @@ def apply_attention(
     Returns:
         AttentionOutput: Object containing attention output and optional weights.
     '''
+    tgt_len = query_states.size(-2)
+    src_len = key_states.size(-2)
     if attention_mask is not None:
         if attention_mask.dtype != torch.float32:
             attention_mask = attention_mask.float()
-        
+
         if attention_mask.max() <= 1.0:
             attention_mask = torch.where(attention_mask == 0, float('-inf'), 0.0)
         
-    if is_causal:
-        tgt_len = query_states.size(-2)
-        src_len = key_states.size(-2)
-        
+    if is_causal and tgt_len > 1:
         causal_mask = torch.tril(
             torch.ones((tgt_len, src_len), device=query_states.device, dtype=query_states.dtype)
         ).view(1, 1, tgt_len, src_len)
@@ -67,7 +66,8 @@ def apply_attention(
             attention_mask = attention_mask + causal_mask
         else:
             attention_mask = causal_mask
-        
+        is_causal = False
+    else:
         is_causal = False
         
     if not output_attentions:
@@ -85,10 +85,10 @@ def apply_attention(
             )
             return AttentionOutput(output=output, attention_weights=None)
         except RuntimeError: pass
-    # Manual Fallback Path
+
     d_k = query_states.size(-1)
     scores = torch.matmul(query_states, key_states.transpose(-2, -1)) / math.sqrt(d_k)
-
+    
     if attention_mask is not None:
         scores = scores + attention_mask
     attention_weights = torch.softmax(scores, dim=-1)

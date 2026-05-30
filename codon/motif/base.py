@@ -1,7 +1,8 @@
 from codon.base import *
 
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Union
 from dataclasses import dataclass
+import torch.nn.functional as F
 
 
 @dataclass
@@ -61,69 +62,166 @@ class CausalLanguageModelOutput:
     hidden_states: Optional[Tuple[torch.Tensor]] = None
 
 
+class KVCache:
+    '''
+    Key-Value Cache container to manage dynamic state during autoregressive generation.
+    '''
+    def __init__(self) -> None:
+        # states list: each element is a tuple of (past_key, past_value) for a layer
+        self.states: List[Tuple[torch.Tensor, torch.Tensor]] = []
+
+    def update(self, next_states: List[Tuple[torch.Tensor, torch.Tensor]]) -> None:
+        '''Update the cache states with the newly computed KV projections.'''
+        self.states = next_states
+
+    @property
+    def current_len(self) -> int:
+        '''Return the current sequence length of stored keys.'''
+        if not self.states or self.states[0] is None:
+            return 0
+        # Shape of key is expected to be [batch, heads, seq_len, head_dim]
+        return self.states[0][0].shape[-2]
+
+    def clear(self) -> None:
+        '''Flush the cache.'''
+        self.states = []
+
+
+class Sampler:
+    def __init__(
+        self,
+        temperature: float = 0.7,
+        top_k: Optional[int] = None,
+        top_p: Optional[float] = None,
+        repetition_penalty: float = 1.15
+    ) -> None:
+        self.temperature = temperature
+        self.top_k = top_k
+        self.top_p = top_p
+        self.repetition_penalty = repetition_penalty
+
+    @torch.no_grad()
+    def __call__(self, logits: torch.Tensor, input_ids: Optional[torch.Tensor] = None) -> torch.Tensor:
+        '''
+        Args:
+            logits (torch.Tensor): [batch_size, vocab_size]
+            input_ids (torch.Tensor, optional): 历史已生成的 token ids [batch_size, seq_len]
+        '''
+        # 0. Repetition Penalty
+        if self.repetition_penalty != 1.0 and input_ids is not None:
+            for i in range(logits.shape[0]):
+                unique_tokens = torch.unique(input_ids[i])
+                for token_id in unique_tokens:
+                    val = logits[i, token_id]
+                    if val > 0:
+                        logits[i, token_id] = val / self.repetition_penalty
+                    else:
+                        logits[i, token_id] = val * self.repetition_penalty
+
+        # 1. Temperature
+        if self.temperature != 1.0:
+            temp = max(self.temperature, 1e-5)
+            logits = logits / temp
+
+        # 2. Top-K
+        if self.top_k is not None and self.top_k > 0:
+            top_k = min(self.top_k, logits.size(-1))
+            indices_to_remove = logits < torch.topk(logits, top_k)[0][..., -1, None]
+            logits = logits.masked_fill(indices_to_remove, float('-inf'))
+
+        # 3. Top-P
+        if self.top_p is not None and 0.0 < self.top_p < 1.0:
+            sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
+            cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+
+            sorted_indices_to_remove = cumulative_probs > self.top_p
+            sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+            sorted_indices_to_remove[..., 0] = False
+
+            indices_to_remove = torch.zeros_like(logits, dtype=torch.bool)
+            indices_to_remove.scatter_(dim=-1, index=sorted_indices, src=sorted_indices_to_remove)
+            logits = logits.masked_fill(indices_to_remove, float('-inf'))
+
+        probs = F.softmax(logits, dim=-1)
+        next_token = torch.multinomial(probs, num_samples=1)
+        return next_token
+
+
 class CausalLanguageModel(BasicModel):
     '''
-    Base class for causal language models with text generation capabilities.
-
-    Attributes:
-        gradient_checkpointing (bool): Whether gradient checkpointing is enabled.
+    Base class for causal language models with optimized autoregressive generation capabilities.
     '''
 
     def generate(
         self,
         input_ids: torch.Tensor,
         max_new_tokens: int = 100,
-        temperature: float = 0.7,
-        top_k: int = None,
-        eos_token_id: int = None
+        sampler: Optional[Sampler] = None,
+        eos_token_id: Optional[int] = None,
+        use_cache: bool = True
     ) -> torch.Tensor:
         '''
-        Generate text tokens autoregressively.
+        Generate text tokens autoregressively using a prefill-decode pipeline.
 
         Args:
-            input_ids (torch.Tensor): Input token IDs with shape [batch, seq_len].
-            max_new_tokens (int): Maximum number of new tokens to generate. Defaults to 100.
-            temperature (float): Sampling temperature. Higher values increase randomness.
-                                 Defaults to 0.7.
-            top_k (int, optional): If set, sample only from top k tokens. Defaults to None.
-            eos_token_id (int, optional): End-of-sequence token ID. If None, generation
-                                          stops after max_new_tokens. Defaults to None.
+            input_ids (torch.Tensor): Input prompt token IDs with shape [batch, seq_len].
+            max_new_tokens (int): Maximum number of new tokens to generate.
+            sampler (Sampler, optional): Instance of Sampler. If None, default Sampler(0.7) is used.
+            eos_token_id (int, optional): End-of-sequence token ID.
+            use_cache (bool): Whether to leverage KV caching for decode steps.
 
         Returns:
             torch.Tensor: Generated token IDs with shape [batch, seq_len + num_generated].
         '''
         self.eval()
+        if sampler is None:
+            sampler = Sampler(temperature=0.7)
+
+        generated = input_ids.clone()
+        
+        kv_cache = KVCache() if use_cache else None
+
         with torch.no_grad():
-            batch_size, seq_len = input_ids.shape
-            generated = input_ids.clone()
+            # 1. Prefill 
+            outputs = self.forward(
+                input_ids=input_ids,
+                start_pos=0,
+                past_key_values=None,
+                use_cache=use_cache
+            )
+            
+            logits = outputs.logits[:, -1, :]
+            next_token = sampler(logits)
+            generated = torch.cat([generated, next_token], dim=-1)
 
-            past_key_values = None
-            for _ in range(max_new_tokens):
-                if seq_len > 1:
-                    outputs = self.forward(
-                        input_ids=generated,
-                        past_key_values=past_key_values,
-                        use_cache=True
-                    )
-                    past_key_values = outputs.past_key_values
-                    logits = outputs.logits[:, -1, :]
-                else:
-                    outputs = self.forward(input_ids=generated)
-                    logits = outputs.logits[:, -1, :]
+            if use_cache and outputs.past_key_values is not None:
+                kv_cache.update(outputs.past_key_values)
 
-                logits = logits / temperature
-
-                if top_k is not None:
-                    top_k_vals = torch.topk(logits, top_k).values[:, -1]
-                    logits = torch.where(logits < top_k_vals.unsqueeze(1), torch.full_like(logits, float('-inf')), logits)
-
-                probs = F.softmax(logits, dim=-1)
-                next_token = torch.multinomial(probs, num_samples=1)
-
-                generated = torch.cat([generated, next_token], dim=1)
-
+            # 2. Decode
+            for _ in range(max_new_tokens - 1):
                 if eos_token_id is not None and (next_token == eos_token_id).all():
                     break
+
+                if use_cache and kv_cache is not None:
+                    current_pos = kv_cache.current_len
+                    outputs = self.forward(
+                        input_ids=next_token,
+                        start_pos=current_pos,
+                        past_key_values=kv_cache.states,
+                        use_cache=True
+                    )
+                    kv_cache.update(outputs.past_key_values)
+                else:
+                    outputs = self.forward(
+                        input_ids=generated,
+                        start_pos=0,
+                        past_key_values=None,
+                        use_cache=False
+                    )
+
+                logits = outputs.logits[:, -1, :]
+                next_token = sampler(logits, input_ids=generated)
+                generated = torch.cat([generated, next_token], dim=-1)
 
             return generated
 
@@ -203,25 +301,7 @@ class AutoencoderVisionModel(BasicModel):
         return self._decode(encoder_output)
 
     def _encode(self, x: torch.Tensor) -> AutoVisionEncoderOutput:
-        '''
-        Internal encoding method to be implemented by subclasses.
-
-        Args:
-            x (torch.Tensor): Input image tensor.
-
-        Returns:
-            AutoVisionEncoderOutput: Output containing latent representation and grid_shape.
-        '''
         raise NotImplementedError('Subclasses must implement _encode method')
 
     def _decode(self, encoder_output: AutoVisionEncoderOutput) -> AutoVisionDecoderOutput:
-        '''
-        Internal decoding method to be implemented by subclasses.
-
-        Args:
-            encoder_output (AutoVisionEncoderOutput): Output from encode method.
-
-        Returns:
-            AutoVisionDecoderOutput: Output containing reconstructed image.
-        '''
         raise NotImplementedError('Subclasses must implement _decode method')

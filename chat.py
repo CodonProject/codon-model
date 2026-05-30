@@ -13,11 +13,29 @@ from rich.console import Console
 
 console = Console()
 
-for chunk in chat(
-    model, tokenizer, model.device, messages=[{'role': 'user', 'content': '学校是监狱吗？'}], stream=True, max_new_tokens=1024
+messages = [
+    {'role': 'user', 'content': '什么是人类'}
+]
+
+console.print(f"\n[bold yellow]User:[/bold yellow] {messages[0]['content']}\n")
+console.print("[bold magenta]Model Thinking...[/bold magenta]")
+
+try:
+    for chunk in chat(
+        model=model,
+        tokenizer=tokenizer,
+        device=model.device,
+        messages=messages,
+        max_new_tokens=1024,
+        temperature=0.3
     ):
-    if chunk.cot_ended: console.print('\n')
-    if chunk.is_cot:
-        console.print(chunk.content, end='', style='blue')
-    else:
-        console.print(chunk.content, end='')
+        if chunk.cot_ended: 
+            console.print('\n\n[bold green]答：[/bold green]', end='')
+            
+        if chunk.is_cot:
+            console.print(chunk.content, end='', style='blue')
+        else:
+            console.print(chunk.content, end='')
+    console.print()
+except KeyboardInterrupt:
+    console.print("\n[red]生成被用户中断。[/red]")
