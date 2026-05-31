@@ -2,14 +2,18 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from typing import Callable, Any, Iterator, Union
+from typing import Callable, Any, Iterator, Union, TypeVar
 
 from safetensors.torch import save_model as safe_save_model
 from safetensors.torch import save_file  as safe_save_file
 from safetensors.torch import load_model as safe_load_model
 
+from codon.builtin.mixins.remote import RemoteResourceMixin
 
-class BasicModel(nn.Module):
+
+TBasicModel = TypeVar('TBasicModel', bound='BasicModel')
+
+class BasicModel(nn.Module, RemoteResourceMixin):
     '''
     Base class for all models, providing common functionality like gradient checkpointing and parameter counting.
     '''
@@ -138,7 +142,7 @@ class BasicModel(nn.Module):
         
         return total
     
-    def load_pretrained(self, path: str, strict: bool = False) -> 'BasicModel':
+    def load_pretrained(self: TBasicModel, path: str, strict: bool = False) -> TBasicModel:
         '''
         Load a pretrained model from a file.
         Args:
@@ -164,14 +168,14 @@ class BasicModel(nn.Module):
         return self
     
     def save_pretrained(
-            self, 
+            self: TBasicModel, 
             path: str, 
             trainable_only: bool = False, 
             include_buffer: bool = True, 
             exclude_modules: list[Union[type, nn.Module]] = None,
             only: list[str] = None,
             exclude: list[str] = None
-        ) -> 'BasicModel':
+        ) -> TBasicModel:
         '''
         Save the model to a file.
 
@@ -240,7 +244,7 @@ class BasicModel(nn.Module):
             
         return self
     
-    def freeze(self) -> 'BasicModel':
+    def freeze(self: TBasicModel) -> TBasicModel:
         '''
         Freeze all parameters in the model by setting requires_grad to False.
 
@@ -251,7 +255,7 @@ class BasicModel(nn.Module):
             param.requires_grad = False
         return self
 
-    def unfreeze(self) -> 'BasicModel':
+    def unfreeze(self: TBasicModel) -> TBasicModel:
         '''
         Unfreeze all parameters in the model by setting requires_grad to True.
 
@@ -261,3 +265,6 @@ class BasicModel(nn.Module):
         for param in self.parameters():
             param.requires_grad = True
         return self
+    
+    def compile(self: TBasicModel) -> TBasicModel:
+        return torch.compile(self)

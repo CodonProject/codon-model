@@ -2,13 +2,28 @@ from codon.base import *
 
 from codon.block.transformer import TransformerDenseDecoder
 from codon.block.embedding   import RotaryEmbedding
+from codon.utils.tokens      import PackedTokenizer
 
 from .base import CausalLanguageModel, CausalLanguageModelOutput
 
 from typing import Optional, List, Tuple
 
 
+class MotifA1Tokenizer(PackedTokenizer):
+    
+    __remote_resource__ = {
+        'repo': 'CodonProject/MotifA1-SFT',
+        'files': ['motif.vocab']
+    }
+
+
 class MotifA1(CausalLanguageModel):
+
+    __remote_resource__ = {
+        'repo': 'CodonProject/MotifA1-SFT',
+        'files': ['MotifA1_SFT.safetensors']
+    }
+
     def __init__(
         self,
         vocab_size: int = 2**13,

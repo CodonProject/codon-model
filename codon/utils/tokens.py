@@ -12,6 +12,8 @@ from transformers import PreTrainedTokenizerFast
 
 from typing import Union, Optional, Generator, Any, List, Dict
 
+from codon.builtin.mixins.remote import RemoteResourceMixin
+
 @dataclass
 class TokenizerTrainerResult:
     '''
@@ -181,7 +183,7 @@ def create_tokenizer_trainer(
     return TokenizerTrainerResult(tokenizer=tokenizer, trainer=trainer)
 
 
-class PackedTokenizer:
+class PackedTokenizer(RemoteResourceMixin):
     def __init__(self, tokenizer: Optional[Union[Tokenizer, str]] = None):
         self._tokenizer: Optional[Tokenizer] = None
         self._fast_tokenizer: Optional[PreTrainedTokenizerFast] = None
