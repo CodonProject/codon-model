@@ -24,7 +24,7 @@ def get_requirements() -> List[str]:
     Returns:
         List[str]: A list of package dependencies.
     '''
-    with open('requirement.txt', 'r', encoding='utf-8') as f:
+    with open('requirements.txt', 'r', encoding='utf-8') as f:
         return [line.strip() for line in f if line.strip() and not line.startswith('#')]
 
 setup(

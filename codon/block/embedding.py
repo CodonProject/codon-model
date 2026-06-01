@@ -225,6 +225,12 @@ class RotaryEmbedding(BasicRotaryEmbedding):
             cos = cos.repeat(*([1] * (cos.ndim - 1)), multiplier)
             sin = sin.repeat(*([1] * (sin.ndim - 1)), multiplier)
 
+        # Cast cos/sin to match input dtype to keep mixed-precision graphs (e.g. ONNX FP16
+        # exports) type-consistent. cos_cached/sin_cached are non-persistent buffers and
+        # therefore not affected by `model.half()`.
+        cos = cos.to(x.dtype)
+        sin = sin.to(x.dtype)
+
         return (x * cos) + (self._rotate_half(x) * sin)
 
 
@@ -352,5 +358,11 @@ class InterleavedRotaryEmbedding(BasicRotaryEmbedding):
             multiplier = x.shape[-1] // cos_all.shape[-1]
             cos_all = cos_all.repeat(*([1] * (cos_all.ndim - 1)), multiplier)
             sin_all = sin_all.repeat(*([1] * (sin_all.ndim - 1)), multiplier)
-        
+
+        # Cast cos/sin to match input dtype to keep mixed-precision graphs (e.g. ONNX FP16
+        # exports) type-consistent. cos_cached/sin_cached are non-persistent buffers and
+        # therefore not affected by `model.half()`.
+        cos_all = cos_all.to(x.dtype)
+        sin_all = sin_all.to(x.dtype)
+
         return (x * cos_all) + (self._rotate_half(x) * sin_all)

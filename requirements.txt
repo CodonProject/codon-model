@@ -16,3 +16,7 @@ uvicorn
 
 # export runtime
 onnx
+onnxsim
+onnxscript
+onnx-simplifier
+onnxconverter_common

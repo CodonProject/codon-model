@@ -10,7 +10,7 @@ Service([
     ModelCard(
         model=model,
         tokenizer=tokenizer,
-        model_id='MotifA1',
+        model_id='Motif-A1',
         owned='CodonProject'
     )
 ]).run(port=11305)

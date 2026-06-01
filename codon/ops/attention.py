@@ -52,11 +52,19 @@ def apply_attention(
     tgt_len = query_states.size(-2)
     src_len = key_states.size(-2)
     if attention_mask is not None:
-        if attention_mask.dtype != torch.float32:
-            attention_mask = attention_mask.float()
+        # Match query dtype rather than forcing FP32, so mixed-precision graphs
+        # (e.g. FP16 ONNX exports) stay type-consistent end-to-end.
+        if attention_mask.dtype != query_states.dtype:
+            attention_mask = attention_mask.to(query_states.dtype)
 
         if attention_mask.max() <= 1.0:
-            attention_mask = torch.where(attention_mask == 0, float('-inf'), 0.0)
+            neg_inf = torch.tensor(
+                float('-inf'), dtype=attention_mask.dtype, device=attention_mask.device
+            )
+            zero = torch.tensor(
+                0.0, dtype=attention_mask.dtype, device=attention_mask.device
+            )
+            attention_mask = torch.where(attention_mask == 0, neg_inf, zero)
         
     if is_causal and tgt_len > 1:
         # Offset diagonal by (src_len - tgt_len) so causal masking remains correct
