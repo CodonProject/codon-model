@@ -3,6 +3,7 @@ from codon.base import *
 from codon.block.transformer import TransformerDenseDecoder
 from codon.block.embedding   import RotaryEmbedding
 from codon.utils.tokens      import PackedTokenizer
+from codon.utils.onnx        import patch_rms_norm
 
 from .base import CausalLanguageModel, CausalLanguageModelOutput
 
@@ -79,7 +80,7 @@ class MotifA1(CausalLanguageModel):
         self,
         input_ids: torch.Tensor,
         mask: torch.Tensor = None,
-        start_pos: int = 0,
+        start_pos: Union[int, torch.Tensor] = 0,
         past_key_values: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None,
         use_cache: bool = False,
         output_attentions: bool = False

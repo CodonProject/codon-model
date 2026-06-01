@@ -8,7 +8,7 @@ from safetensors.torch import save_model as safe_save_model
 from safetensors.torch import save_file  as safe_save_file
 from safetensors.torch import load_model as safe_load_model
 
-from codon.builtin.mixins.remote import RemoteResourceMixin
+from codon.builtins.mixins.remote import RemoteResourceMixin
 
 
 TBasicModel = TypeVar('TBasicModel', bound='BasicModel')

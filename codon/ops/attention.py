@@ -46,6 +46,9 @@ def apply_attention(
     Returns:
         AttentionOutput: Object containing attention output and optional weights.
     '''
+    if attention_mask is not None and attention_mask.numel() == 0:
+        attention_mask = None
+
     tgt_len = query_states.size(-2)
     src_len = key_states.size(-2)
     if attention_mask is not None:

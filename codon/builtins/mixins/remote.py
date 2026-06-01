@@ -1,6 +1,6 @@
 import os
 from typing import Literal, Optional, Dict, Any, TypeVar
-from codon.builtin.download import CACHE_DIR, PLATFORM_TEMPLATES, select_best_platform, download_file
+from codon.builtins.download import CACHE_DIR, PLATFORM_TEMPLATES, select_best_platform, download_file
 
 
 TRemoteResource = TypeVar('TRemoteResource', bound='RemoteResourceMixin')

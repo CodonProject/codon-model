@@ -135,7 +135,7 @@ class _TransformerDecoder(BasicModel):
         attention_mask: torch.Tensor = None,
         output_attentions: bool = False,
         position_emb: BasicEmbedding = None,
-        embedding_start: int = 0,
+        embedding_start: Union[int, torch.Tensor] = 0,
         embedding_pos: torch.Tensor = None,
         past_key_value: tuple[torch.Tensor, torch.Tensor] = None,
         use_cache: bool = False

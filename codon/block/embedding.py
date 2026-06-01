@@ -175,7 +175,7 @@ class RotaryEmbedding(BasicRotaryEmbedding):
         '''
         super().__init__(model_dim, max_len, base)
 
-    def forward(self, x: torch.Tensor, positions: torch.Tensor = None, start_pos: int = 0) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, positions: torch.Tensor = None, start_pos: Union[int, torch.Tensor] = 0) -> torch.Tensor:
         '''
         Apply rotary positional encoding.
         
@@ -187,7 +187,7 @@ class RotaryEmbedding(BasicRotaryEmbedding):
             x (torch.Tensor): Input tensor.
             positions (torch.Tensor, optional): Explicit position indices. Shape: [Batch, Seq_Len].
                 If provided, uses these indices to retrieve positional embeddings.
-            start_pos (int, optional): Starting position index for KV Cache inference.
+            start_pos (Union[int, torch.Tensor], optional): Starting position index for KV Cache inference.
                                        Used if positions is None. Defaults to 0.
 
         Returns:
@@ -206,8 +206,14 @@ class RotaryEmbedding(BasicRotaryEmbedding):
                 cos = cos.unsqueeze(1)
                 sin = sin.unsqueeze(1)
         else:
-            cos = self.cos_cached[start_pos : start_pos + seq_len, :]
-            sin = self.sin_cached[start_pos : start_pos + seq_len, :]
+            if not isinstance(start_pos, torch.Tensor):
+                start_pos_tensor = torch.tensor(start_pos, device=x.device, dtype=torch.long)
+            else:
+                start_pos_tensor = start_pos.to(device=x.device, dtype=torch.long)
+            
+            positions_idx = torch.arange(seq_len, device=x.device, dtype=torch.long) + start_pos_tensor
+            cos = self.cos_cached[positions_idx]
+            sin = self.sin_cached[positions_idx]
             
             shape = [1] * (ndim - 2) + [seq_len, -1]
             cos = cos.view(*shape)
