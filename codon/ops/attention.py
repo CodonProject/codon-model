@@ -59,10 +59,14 @@ def apply_attention(
             attention_mask = torch.where(attention_mask == 0, float('-inf'), 0.0)
         
     if is_causal and tgt_len > 1:
+        # Offset diagonal by (src_len - tgt_len) so causal masking remains correct
+        # when a KV cache is present (i.e., src_len > tgt_len). For pure prefill
+        # (src_len == tgt_len) this reduces to the standard lower-triangular mask.
         causal_mask = torch.tril(
-            torch.ones((tgt_len, src_len), device=query_states.device, dtype=query_states.dtype)
+            torch.ones((tgt_len, src_len), device=query_states.device, dtype=query_states.dtype),
+            diagonal=src_len - tgt_len
         ).view(1, 1, tgt_len, src_len)
-        
+
         causal_mask = torch.where(causal_mask == 0, float('-inf'), 0.0)
         
         if attention_mask is not None:

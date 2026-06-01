@@ -1,7 +1,10 @@
+# core
 torch
 torchvision
 transformers
 tokenizers
+
+# dataset
 pandas
 numpy
 pyarrow
@@ -10,3 +13,6 @@ pillow
 # service
 fastapi
 uvicorn
+
+# export runtime
+onnx
