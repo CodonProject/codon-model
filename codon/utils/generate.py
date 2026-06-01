@@ -1,5 +1,3 @@
-# codon/utils/generate.py
-
 from typing import Generator, List, Dict, Optional
 from dataclasses import dataclass
 import torch
