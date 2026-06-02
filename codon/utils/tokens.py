@@ -14,6 +14,7 @@ from typing import Union, Optional, Generator, Any, List, Dict
 
 from codon.builtins.mixins.remote import RemoteResourceMixin
 
+
 @dataclass
 class TokenizerTrainerResult:
     '''
@@ -48,8 +49,9 @@ code_tokens = ['[fim_pre]', '[fim_mid]', '[fim_suf]']
 tool_tokens = ['[tool_start]', '[tool_name]', '[tool_args]', '[tool_end]']
 
 multimodal_tokens = [
-    '[image_start]', '[image_end]', '[audio_start]', '[audio_end]', 
-    '[video_start]', '[video_end]'
+    '[image_start]', '[image_pad]', '[image_end]',
+    '[audio_start]', '[audio_pad]', '[audio_end]', 
+    '[video_start]', '[video_pad]', '[video_end]'
 ]
 
 base_special_tokens = (

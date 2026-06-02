@@ -1,8 +1,4 @@
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
-from codon.base import BasicModel
+from codon.base import *
 from codon.ops.attention import AttentionOutput
 from codon.ops.fourier   import apply_fourier_mixing
 

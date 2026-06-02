@@ -1,9 +1,12 @@
 import math
 import numpy as np
+
 from codon.utils.data import ChunkedTokenStream, CodonDataset, Stateful
 from codon.base import BasicModel
+
 from dataclasses import dataclass
 from typing import List, Dict, Any, Union, Iterable, Optional
+
 
 @dataclass
 class TrainingStepsConfig:

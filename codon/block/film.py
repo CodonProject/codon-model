@@ -3,6 +3,7 @@ from codon.base import *
 from dataclasses import dataclass
 from typing      import Optional
 
+
 @dataclass
 class FiLMOutput:
     '''
@@ -18,7 +19,7 @@ class FiLMOutput:
     @property
     def gated_output(self):
         if self.gate is None: return self.output
-        return self.output * self.gate
+        return self.output * torch.tanh(self.gate)
 
 
 class FiLM(BasicModel):
@@ -80,7 +81,7 @@ class FiLM(BasicModel):
             self.proj = nn.Linear(cond_features, self.out_dim)
         else: self.proj = None
 
-        self._init_weights(self)
+        self.apply(self._init_weights)
     
     def _init_weights(self, model: nn.Module):
         '''
@@ -92,12 +93,23 @@ class FiLM(BasicModel):
         Args:
             model (nn.Module): The model to initialize.
         '''
-        if model is self and self.proj is not None:
-            nn.init.constant_(self.proj.weight, 0)
-            nn.init.constant_(self.proj.bias, 0)
-            if isinstance(self.gate_proj, nn.Identity): return
+        if model is self.proj and self.proj is not None:
+            nn.init.constant_(self.proj.weight, 0.0)
+            
+            with torch.no_grad():
+                bias_list = []
+                if self.use_gamma:
+                    bias_list.append(torch.zeros(self.in_features))
+                if self.use_beta:
+                    bias_list.append(torch.zeros(self.in_features))
+                if self.use_gate:
+                    bias_list.append(torch.ones(self.in_features) * 3.0)
+                
+                self.proj.bias.copy_(torch.cat(bias_list))
+
+        elif model is self.gate_proj and not isinstance(self.gate_proj, nn.Identity):
             nn.init.xavier_uniform_(self.gate_proj.weight, gain=0.1)
-            nn.init.zeros_(self.gate_proj.bias)
+            nn.init.constant_(self.gate_proj.bias, 3.0)
 
     def _reshape(self, param: torch.Tensor, ref_ndim: int) -> torch.Tensor:
         '''

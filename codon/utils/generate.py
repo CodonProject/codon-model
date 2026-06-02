@@ -2,21 +2,21 @@ from typing import Generator, List, Dict, Optional
 from dataclasses import dataclass
 import torch
 
-from codon.motif.base import Sampler, KVCache
-from codon.utils.tokens import PackedTokenizer
-from codon.motif.base import CausalLanguageModel
+from codon.utils.tokens  import PackedTokenizer
 from codon.utils.session import Session
+from codon.motif.base import CausalLanguageModel
+from codon.motif.base import Sampler, KVCache
 
 
 @dataclass
 class ChatChunk:
     '''
-    流式生成中返回的数据块。
-    
+    A data chunk returned during streaming generation.
+
     Attributes:
-        content (str): 本次解码出的文本片段。
-        is_cot (bool): 当前片段是否属于思维链（思考过程）。
-        cot_ended (bool): 是否刚刚结束思考（用于触发换行等界面渲染逻辑）。
+        content (str): The decoded text fragment from the current step.
+        is_cot (bool): Whether the current fragment belongs to the Chain of Thought (thinking process).
+        cot_ended (bool): Whether the thinking process has just ended, typically used to trigger UI rendering logic like line breaks.
     '''
     content: str
     is_cot: bool
@@ -34,7 +34,23 @@ def chat(
     top_p: Optional[float] = None,
 ) -> Generator[ChatChunk, None, None]:
     '''
-    流式对话生成器，支持思维链状态检测与增量 KV 缓存管理。
+    Generates chat responses in a streaming fashion.
+
+    This function supports Chain of Thought (CoT) state detection and incremental
+    KV cache management for efficient decoding.
+
+    Args:
+        model (CausalLanguageModel): The causal language model used for text generation.
+        tokenizer (PackedTokenizer): The tokenizer for encoding inputs and decoding outputs.
+        device (torch.device): The device (CPU/CUDA) where the model computation is executed.
+        messages (List[Dict[str, str]]): A list of dialogue messages, where each message is a dictionary containing 'role' and 'content'.
+        max_new_tokens (int): The maximum number of new tokens to generate. Defaults to 1024.
+        temperature (float): Sampling temperature. Defaults to 0.3.
+        top_k (Optional[int]): The number of highest probability vocabulary tokens to keep for top-k filtering. Defaults to None.
+        top_p (Optional[float]): Nucleus filtering probability threshold. Defaults to None.
+
+    Yields:
+        ChatChunk: Generated text chunks containing content and Chain of Thought states.
     '''
     model.eval()
     

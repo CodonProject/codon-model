@@ -5,6 +5,7 @@ import os
 
 from typing import Any, Optional
 
+
 def seed_everything(seed: int = 42, strict: bool = False, warn_only: bool = True, verbose: bool = True) -> None:
     '''
     Sets all random seeds to ensure reproducibility of PyTorch experiments.

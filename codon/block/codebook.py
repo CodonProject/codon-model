@@ -1,6 +1,5 @@
 from codon.base import *
 
-
 from dataclasses import dataclass
 from typing import Tuple
 

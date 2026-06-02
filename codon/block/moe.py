@@ -1,5 +1,3 @@
-import torch.nn.functional as F
-
 from codon.base  import *
 from dataclasses import dataclass
 from typing      import Union

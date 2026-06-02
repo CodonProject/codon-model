@@ -1,7 +1,5 @@
 from codon.base import *
 
-from typing import Union, Optional, Tuple
-
 from codon.utils.safecode  import safecode
 from codon.block.embedding import BasicEmbedding
 from codon.block.attention import MultiHeadAttention, AttentionOutput
@@ -9,7 +7,9 @@ from codon.block.fourier   import MultiHeadFourier
 from codon.block.mlp       import MLP
 from codon.block.moe       import MoE, MoEOutput
 
+from typing import Union, Optional, Tuple
 from dataclasses import dataclass
+
 
 @dataclass
 class FlowOutput:

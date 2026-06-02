@@ -5,6 +5,7 @@ import copy
 import torch
 import json
 
+
 MaskPolicy = Union[Literal['all', 'none', 'content', 'thought', 'answer', 'fim'], Sequence[bool]]
 
 @dataclass

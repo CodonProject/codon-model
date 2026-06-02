@@ -1,11 +1,10 @@
 import math
-import torch
-import torch.nn as nn
-from typing import Tuple, Optional
 
-from codon.base import BasicModel
+from codon.base import *
 from codon.block.conv import ConvBlock
 from codon.ops.pixelshuffle import pixel_shuffle, unpixel_shuffle
+
+from typing import Tuple, Optional
 
 
 class PixelShuffleUpSample(BasicModel):

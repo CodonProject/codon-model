@@ -42,8 +42,6 @@ class LowRankFusion(BasicModel):
         self.fusion_weights = nn.Linear(rank, out_features, bias=True)
         
         self.dropout = nn.Dropout(dropout)
-        
-        self._init_weights(self)
 
     def forward(self, inputs: List[torch.Tensor]) -> torch.Tensor:
         '''
@@ -112,8 +110,6 @@ class GatedMultimodalUnit(BasicModel):
         
         total_in_features = sum(in_features)
         self.gate_net = nn.Linear(total_in_features, len(in_features))
-        
-        self._init_weights(self)
 
     def forward(self, inputs: List[torch.Tensor]) -> torch.Tensor:
         '''
@@ -191,8 +187,6 @@ class DiffusionMapsFusion(BasicModel):
         ])
         
         self.output_proj = nn.Linear(out_features * 2, out_features)
-        
-        self._init_weights(self)
         
     def _compute_affinity(self, x: torch.Tensor) -> torch.Tensor:
         '''
@@ -307,8 +301,7 @@ class CompactMultimodalPooling(BasicModel):
         
         if self.channel_first:
             inputs = [x.movedim(1, -1) for x in inputs]
-            
-        batch_size = inputs[0].size(0)
+        
         fft_product: Optional[torch.Tensor] = None
         
         for i, x in enumerate(inputs):

@@ -4,14 +4,12 @@ import psutil
 import socket
 import json
 import importlib.metadata
-try:
-    import numpy as np
-except ImportError:
-    np = None
+import numpy as np
 
 from datetime import datetime
 from dataclasses import dataclass, asdict
 from typing import Dict, Any, Optional
+
 
 @dataclass(frozen=True)
 class SystemEnvironment:

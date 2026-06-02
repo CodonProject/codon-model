@@ -1,7 +1,5 @@
 from codon.base import *
 
-import torch.nn.functional as F
-
 from typing import Tuple
 from dataclasses import dataclass
 
