@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.tensorboard import SummaryWriter
+
+from teleboard import TeleWriter
 
 from codon.base  import *
 from codon.block import (
@@ -167,7 +168,11 @@ if __name__ == '__main__':
         optimizer = optim.Adam(model.parameters(), lr=1e-3)
         criterion = nn.CrossEntropyLoss()
         
-        writer = SummaryWriter(log_dir=f'runs/MNIST_comparison/{way_tag}')
+        writer = TeleWriter(
+            exp_id=f'MNIST_comparison/{way_tag}', 
+            server_url="http://localhost:8000",
+            send_interval=5
+        )
         
         for epoch in range(epochs):
             train_loss, train_acc = train_one_epoch(
@@ -192,9 +197,10 @@ if __name__ == '__main__':
         analysis = confusion_map.analyse(model)
         fig: plt.Figure = analysis.fig
         
-        writer.add_figure('Evaluation/ConfusionMatrix', fig, global_step=epochs)
+        writer.add_image('Evaluation/ConfusionMatrix', fig, global_step=epochs)
         
         plt.close(fig)
+
         writer.close()
         
         print(f'Configuration [{way_tag}] execution complete and logged.')
