@@ -32,6 +32,8 @@ class AdaLayerNorm(BasicModel):
         self.features_dim = features_dim
         self.embedding_dim = embedding_dim
 
+        if hidden_features is None: hidden_features = features_dim
+
         self.mlp = MLP(
             in_features=embedding_dim,
             hidden_features=hidden_features,

@@ -24,7 +24,7 @@ class MLP(BasicModel):
         bias: bool = True,
         use_gate: bool = False,
         dropout: float = 0.0,
-        act_layer: str = "silu",
+        act_layer: str = 'silu',
     ):
         '''
         Initialize the MLP module.
@@ -50,14 +50,14 @@ class MLP(BasicModel):
         self.dropout_p = dropout
         self.dropout = nn.Dropout(dropout)
         
-        if act_layer.lower() == "silu":
+        if act_layer.lower() == 'silu':
             self.act = nn.SiLU()
-        elif act_layer.lower() == "gelu":
+        elif act_layer.lower() == 'gelu':
             self.act = nn.GELU()
-        elif act_layer.lower() == "relu":
+        elif act_layer.lower() == 'relu':
             self.act = nn.ReLU()
         else:
-            raise NotImplementedError(f"Activation {act_layer} not implemented")
+            raise NotImplementedError(f'Activation {act_layer} not implemented')
 
         if use_gate:
             self.gate_proj = nn.Linear(in_features, hidden_features, bias=bias)

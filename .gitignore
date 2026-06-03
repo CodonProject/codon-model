@@ -209,10 +209,12 @@ __marimo__/
 # Codon
 *.zip
 test_dataset/
+checkpoint/
+sft/
+motif.vocab
 
 # Trae
 .trae/
 
-checkpoint/
-sft/
-motif.vocab
+# Tensorboard
+runs/
