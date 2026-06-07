@@ -23,7 +23,7 @@ seed_everything(seed=42, verbose=False)
 
 
 class FastAttn(BasicModel):
-    def __init__(self, way: str = 'low'):
+    def __init__(self, way: str = 'film'):
         super().__init__()
         self.way = way
         self.linear = nn.Linear(28*28, 14)
@@ -54,7 +54,7 @@ class FastAttn(BasicModel):
     def forward(self, x: torch.Tensor):
         attn: torch.Tensor = self.linear(x)
 
-        if self.way == 'film': 
+        if self.way == 'film':
             film_output: FiLMOutput = self.film(x, attn)
             return film_output.gated_output
         
@@ -158,7 +158,7 @@ if __name__ == '__main__':
     train_loader, test_loader = prepare_loader()
     
     ways = ['', 'gated', 'low', 'film', 'adanorm']
-    epochs = 10
+    epochs = 3
     
     for way in ways:
         way_tag = way if way != '' else 'baseline_no_attn'

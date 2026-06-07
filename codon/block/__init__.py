@@ -1,4 +1,4 @@
-from .attention import AttentionOutput, MultiHeadAttention
+from .attention import AttentionOutput, MultiHeadAttention, MultiHeadAttentionKEV
 from .codebook import LookupFreeQuantization, LookupFreeQuantizationOutput
 from .conv import (
     CausalConv1d,
@@ -42,6 +42,7 @@ __all__ = [
     # attention
     'AttentionOutput',
     'MultiHeadAttention',
+    'MultiHeadAttentionKEV',
     # codebook
     'LookupFreeQuantization',
     'LookupFreeQuantizationOutput',

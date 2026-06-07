@@ -5,7 +5,8 @@ from codon.ops.fourier   import apply_fourier_mixing
 
 class MultiHeadFourier(BasicModel):
     '''
-    Multi-Head Fourier (MHF) module from 'Caracal: Causal Architecture via Spectral Mixing'.
+    Multi-Head Fourier (MHF) module.
+    From 'Caracal: Causal Architecture via Spectral Mixing' [arXiv:2605.00292 cs.LG]
     Replaces dense Attention with O(L log L) frequency-domain mixing.
     '''
     def __init__(
