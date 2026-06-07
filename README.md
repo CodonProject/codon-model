@@ -102,7 +102,7 @@ print(tokenizer.decode(output_ids[0]))
 codon/
 ├── block/          # Neural network building blocks (Attention, MoE, LoRA, Norm, etc.)
 ├── motif/          # Pre-built model families (MotifA1 Language Model, MotifV1 Autoencoder)
-├── ops/            # Experimental operators (Bio-inspired, Manifold, Fourier)
+├── ops/            # Operators (Bio-inspired, Manifold, Fourier)
 ├── model/          # Classic model baselines (ResNet, TCN, PatchGAN)
 ├── kit/            # Training loop frameworks (Language/Vision)
 └── utils/          # Core utilities (PackedTokenizers, Session masking, Eval tools)
