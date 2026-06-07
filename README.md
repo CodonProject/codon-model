@@ -11,9 +11,7 @@
 
 **Codon** is a lightweight PyTorch toolbox designed for research-driven prototyping and rapid architecture exploration. It aims to bridge the gap between abstract algorithmic ideas and trainable deep learning modules, minimizing engineering boilerplate while preserving flexibility.
 
----
-
-## 🌟 Key Workflows
+## Key Workflows
 
 ### 1. Rapid Architecture Prototyping
 Assemble custom models (Transformers, MoEs, Multimodals) using clean, composable building blocks:
@@ -32,11 +30,13 @@ Jumpstart your modeling with pre-configured models that support one-line remote 
 *   **MotifA1**: A Causal Language Model featuring GQA, SwiGLU, and KV caching.
 *   **MotifV1**: A Vision Autoencoder powered by Lookup-Free Quantization (LFQ) and 2D Rotary Embeddings.
 
----
+## Installation
 
-## 🛠️ Installation
+```bash
+pip install codon-model
+```
 
-Clone the repository and install in editable mode:
+Or clone the repository and install in editable mode:
 
 ```bash
 git clone https://github.com/CodonProject/codon-model.git
@@ -44,9 +44,7 @@ cd codon-model
 pip install -e .
 ```
 
----
-
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Build a Custom Model with `BasicModel`
 Inherit from `BasicModel` to instantly gain features like gradient checkpointing, precise parameter counting, and strict `.safetensors` serialization rules.
@@ -98,9 +96,7 @@ output_ids = model.generate(input_ids, max_new_tokens=20)
 print(tokenizer.decode(output_ids[0]))
 ```
 
----
-
-## 📂 Repository Structure
+## Repository Structure
 
 ```text
 codon/
@@ -112,8 +108,6 @@ codon/
 └── utils/          # Core utilities (PackedTokenizers, Session masking, Eval tools)
 ```
 
----
-
-## 📜 License
+## License
 
 This project is licensed under the **Apache License 2.0** - see the [LICENSE](LICENSE) file for details.
