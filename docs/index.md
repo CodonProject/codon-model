@@ -1,6 +1,6 @@
 # Codon Model Documentation
 
-Codon is a PyTorch toolbox designed for research-driven neural network prototyping and experimentation. It focuses on rapidly transforming algorithmic ideas into trainable end-to-end modules while maintaining a balance between engineering rigor and reproducibility.
+Codon is a PyTorch toolbox designed for research-driven prototyping and experimentation. It focuses on rapidly transforming algorithmic ideas into trainable end-to-end modules while maintaining a balance between engineering rigor and reproducibility.
 
 ## Overview
 
