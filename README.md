@@ -1,8 +1,13 @@
 # Codon
 
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
-[![PyTorch 2.0+](https://img.shields.io/badge/pytorch-2.0+-red.svg)](https://pytorch.org/)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue?style=flat)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue?style=flat&logo=python&logoColor=white)](https://www.python.org)
+[![PyTorch 2.0+](https://img.shields.io/badge/Pytorch-2.0%2B-orange?style=flat&logo=pytorch)](https://pytorch.org)
+[![PyPI version](https://img.shields.io/pypi/v/codon-model?style=flat&logoColor=Pypi&label=PyPI&color=green)](https://pypi.org/project/codon-model)
+
+[![HuggingFace](https://img.shields.io/badge/HuggingFace-CodonProject-white?logo=huggingface)](https://huggingface.co/CodonProject)
+[![Modelscope](https://img.shields.io/badge/Modelscope-CodonProject-white?logo=modelscope)](https://www.modelscope.cn/organization/CodonProject)
+
 
 **Codon** is a lightweight PyTorch toolbox designed for research-driven prototyping and rapid architecture exploration. It aims to bridge the gap between abstract algorithmic ideas and trainable deep learning modules, minimizing engineering boilerplate while preserving flexibility.
 
