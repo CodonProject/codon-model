@@ -17,7 +17,7 @@ class FiLMOutput:
     gate: Optional[torch.Tensor] = None
 
     @property
-    def gated_output(self):
+    def final_output(self):
         if self.gate is None: return self.output
         return self.output * torch.tanh(self.gate)
 

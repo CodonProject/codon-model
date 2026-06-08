@@ -10,6 +10,8 @@ from safetensors.torch import load_model as safe_load_model
 
 from codon.builtins.mixins.remote import RemoteResourceMixin
 
+from codon.utils.safecode import safecode as utils_safecode
+
 
 TBasicModel = TypeVar('TBasicModel', bound='BasicModel')
 
@@ -266,5 +268,19 @@ class BasicModel(nn.Module, RemoteResourceMixin):
             param.requires_grad = True
         return self
     
-    def compile(self: TBasicModel) -> TBasicModel:
-        return torch.compile(self)
+    def compile(self: TBasicModel, dynamic:bool|None=None) -> TBasicModel:
+        return torch.compile(self, dynamic=dynamic)
+    
+    def safecode(self: TBasicModel, length: int = 4, exclude_confusing: bool = False) -> str:
+        '''
+        Generates a random safe code consisting of letters and digits.
+
+        Args:
+            length (int): The length of the code to generate. Defaults to 4.
+            exclude_confusing (bool): If True, excludes confusing characters
+                ('0oO1iIlLq9g') to reduce human error. Defaults to False.
+
+        Returns:
+            str: The generated random code.
+        '''
+        return utils_safecode(length=length, exclude_confusing=exclude_confusing)

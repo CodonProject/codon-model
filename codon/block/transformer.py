@@ -158,7 +158,7 @@ class _TransformerDecoder(BasicModel):
         '''
         x = self.attn_norm(hidden_states)
 
-        attention_output: AttentionOutput = self.attn.forward(
+        attention_output: AttentionOutput = self.attn(
             hidden_states=x,
             attention_mask=attention_mask,
             output_attentions=output_attentions,
