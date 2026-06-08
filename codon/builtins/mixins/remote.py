@@ -1,142 +1,114 @@
-import os
-from typing import Literal, Optional, Dict, Any, TypeVar
-from codon.builtins.download import CACHE_DIR, PLATFORM_TEMPLATES, select_best_platform, download_file
+from typing import Literal, Optional, Dict, Any, TypeVar, Union
+from codon.builtins.repo import Repo
+
 
 
 TRemoteResource = TypeVar('TRemoteResource', bound='RemoteResourceMixin')
 
 class RemoteResourceMixin:
-    __modelscope__: Optional[Dict[str, Any]] = None
-    __huggingface__: Optional[Dict[str, Any]] = None
-    __remote_resource__: Optional[Dict[str, Any]] = None
+    '''
+    Mixin for loading resources from remote repositories.
+
+    Provides functionality to download and load models/datasets from ModelScope,
+    HuggingFace, and GitHub repositories. Supports automatic platform selection
+    based on network latency and fallback mechanisms.
+
+    Attributes:
+        __modelscope__ (Optional[Union[str, Dict[str, Any]]]): ModelScope repository configuration.
+        __huggingface__ (Optional[Union[str, Dict[str, Any]]]): HuggingFace repository configuration.
+        __github__ (Optional[Union[str, Dict[str, Any]]]): GitHub repository configuration.
+        __remote_resource__ (Optional[Union[str, Dict[str, Any]]]): Generic remote resource configuration.
+    '''
+
+    __modelscope__: Optional[Union[str, Dict[str, Any]]] = None
+    __huggingface__: Optional[Union[str, Dict[str, Any]]] = None
+    __github__: Optional[Union[str, Dict[str, Any]]] = None
+    __remote_resource__: Optional[Union[str, Dict[str, Any]]] = None
 
     def from_remote(
         self: TRemoteResource,
-        platform: Optional[Literal['modelscope', 'huggingface']] = None, 
+        platform: Optional[Literal['modelscope', 'huggingface', 'github']] = None, 
         url: Optional[str] = None,
-        cache_dir: Optional[str] = None
+        cache_dir: Optional[str] = None,
+        token: Optional[str] = None,
+        repo_type: Optional[Literal['model', 'dataset']] = None
     ) -> TRemoteResource:
-        base_cache_path = cache_dir or CACHE_DIR
-        
+        '''
+        Load a resource from a remote repository or custom URL.
+
+        Args:
+            platform (Optional[Literal['modelscope', 'huggingface', 'github']]): 
+                Specific platform to use. If None, selects automatically based on latency.
+            url (Optional[str]): Custom URL to download from. If provided, ignores repository configs.
+            cache_dir (Optional[str]): Custom cache directory.
+            token (Optional[str]): Authentication token for private repositories.
+            repo_type (Optional[Literal['model', 'dataset']]): Type of resource to download.
+
+        Returns:
+            TRemoteResource: The instance with loaded resource.
+
+        Raises:
+            ValueError: If no repository configuration is found.
+        '''
         if url:
-            filename = url.split('/')[-1]
-            local_dir = os.path.join(base_cache_path, 'custom_downloads')
-            local_path = os.path.join(local_dir, filename)
-            
-            if not os.path.exists(local_path):
-                download_file(url, local_path, desc=f'Downloading custom resource')
-            
-            if hasattr(self, '_load_remote'):
-                self._load_remote([local_path])
-            elif hasattr(self, 'load_pretrained'):
-                self.load_pretrained(local_path)
-            elif hasattr(self, 'load'):
-                self.load(local_path)
-                
+            local_path = Repo.download_from_url(url, dest_dir=cache_dir)
+            self._dispatch_load([local_path])
             return self
 
-        available_sources = {}
-        remote_resource = getattr(self, '__remote_resource__', None)
+        modelscope_cfg = getattr(self, '__modelscope__', None) or getattr(self, '__remote_resource__', None)
+        huggingface_cfg = getattr(self, '__huggingface__', None) or getattr(self, '__remote_resource__', None)
+        github_cfg = getattr(self, '__github__', None)
 
-        if getattr(self, '__modelscope__', None):
-            available_sources['modelscope'] = self.__modelscope__
-        elif remote_resource:
-            available_sources['modelscope'] = remote_resource
+        if not any([modelscope_cfg, huggingface_cfg, github_cfg]):
+            raise ValueError(f'No configuration found in {self.__class__.__name__}.')
 
-        if getattr(self, '__huggingface__', None):
-            available_sources['huggingface'] = self.__huggingface__
-        elif remote_resource:
-            available_sources['huggingface'] = remote_resource
-            
-        if not available_sources:
-            raise ValueError(f'Neither __modelscope__ nor __huggingface__ nor __remote_resource__ configuration was found in {self.__class__.__name__}.')
-
-        if platform is None:
-            cached_platforms = []
-            for plat, config in available_sources.items():
-                repo = config['repo']
-                files = config.get('files', [])
-                branch = config.get('branch', 'master' if plat == 'modelscope' else 'main')
-                repo_subdir = repo.replace('/', '_')
-                local_dir = os.path.join(base_cache_path, plat, repo_subdir, branch)
-                if files:
-                    has_all_files = all(os.path.exists(os.path.join(local_dir, f)) for f in files)
-                    if has_all_files:
-                        cached_platforms.append(plat)
-
-            if cached_platforms:
-                chosen_platform = select_best_platform(cached_platforms)
-                print(f'[*] Using cached platform: {chosen_platform}')
-            else:
-                chosen_platform = select_best_platform(list(available_sources.keys()))
-                print(f'[*] Auto-detected optimal platform: {chosen_platform}')
-        else:
-            chosen_platform = platform
-            if chosen_platform not in available_sources:
-                raise ValueError(f"Platform '{chosen_platform}' configuration is missing in this class.")
-
-        local_paths = []
+        config_repo_type = None
+        for cfg in [modelscope_cfg, huggingface_cfg, github_cfg]:
+            if isinstance(cfg, dict) and 'repo_type' in cfg:
+                config_repo_type = cfg['repo_type']
+                break
         
-        for file in files:
-            # Detect starting platform and initialize state
-            current_platform = chosen_platform
-            attempted_platforms = {current_platform}
-            
-            while True:
-                config = available_sources[current_platform]
-                repo = config['repo']
-                files = config.get('files', [])
-                branch = config.get('branch', 'master' if current_platform == 'modelscope' else 'main')
+        resolved_repo_type = repo_type or config_repo_type or 'model'
 
-                repo_subdir = repo.replace('/', '_')
-                local_dir = os.path.join(base_cache_path, current_platform, repo_subdir, branch)
-                os.makedirs(local_dir, exist_ok=True)
-                
-                local_path = os.path.join(local_dir, file)
-                shared_temp_path = os.path.join(base_cache_path, 'temp', repo_subdir, file + '.tmp')
+        repo = Repo(
+            modelscope=modelscope_cfg,
+            huggingface=huggingface_cfg,
+            github=github_cfg,
+            repo_type=resolved_repo_type,
+            cache_dir=cache_dir,
+            token=token
+        )
 
-                if os.path.exists(local_path):
-                    if local_path not in local_paths:
-                        local_paths.append(local_path)
-                    break
+        local_paths = repo.download_configured_files(platform=platform)
 
-                download_url = PLATFORM_TEMPLATES[current_platform].format(
-                    repo=repo,
-                    branch=branch,
-                    file=file
-                )
-                
-                try:
-                    download_file(
-                        download_url,
-                        local_path,
-                        desc=f'Retrieving {file} ({current_platform})',
-                        temp_path=shared_temp_path
-                    )
-                    if local_path not in local_paths:
-                        local_paths.append(local_path)
-                    break
-                except Exception as e:
-                    print(f'\n[!] Error downloading from {current_platform}: {e}')
-                    alt_platforms = [p for p in available_sources.keys() if p not in attempted_platforms]
-                    if not alt_platforms:
-                        raise RuntimeError(f"Failed to download '{file}' from all available platforms.") from e
+        self._dispatch_load(local_paths)
+        return self
 
-                    next_platform = alt_platforms[0]
-                    print(f'[*] Switching downloading platform from {current_platform} to {next_platform} for resume...')
-                    current_platform = next_platform
-                    attempted_platforms.add(next_platform)
+    def _dispatch_load(self, local_paths: list[str]) -> None:
+        '''
+        Dispatch loaded files to the appropriate loader method.
 
+        Attempts to call loader methods in the following priority:
+        1. _load_remote(local_paths) - Custom remote loader
+        2. load_pretrained(target_file) - HuggingFace-style loader
+        3. load(target_file) - Generic loader
+
+        Args:
+            local_paths (list[str]): List of local paths to loaded files.
+
+        Raises:
+            NotImplementedError: If no loader method is found.
+        '''
         if hasattr(self, '_load_remote'):
             self._load_remote(local_paths)
-        else:
-            if local_paths:
-                target_file = local_paths[0]
-                if hasattr(self, 'load_pretrained'):
-                    self.load_pretrained(target_file)
-                elif hasattr(self, 'load'):
-                    self.load(target_file)
-                else:
-                    raise NotImplementedError(f'No loader method found in {self.__class__.__name__}.')
-
-        return self
+        elif local_paths:
+            target_file = local_paths[0]
+            if hasattr(self, 'load_pretrained'):
+                self.load_pretrained(target_file)
+            elif hasattr(self, 'load'):
+                self.load(target_file)
+            else:
+                raise NotImplementedError(
+                    f"No loader method (_load_remote, load_pretrained, or load) "
+                    f"found in {self.__class__.__name__}."
+                )

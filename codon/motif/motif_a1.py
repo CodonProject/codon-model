@@ -14,7 +14,8 @@ class MotifA1Tokenizer(PackedTokenizer):
     
     __remote_resource__ = {
         'repo': 'CodonProject/MotifA1-SFT',
-        'files': ['motif.vocab']
+        'files': ['motif.vocab'],
+        'repo_type': 'model'
     }
 
 
@@ -22,7 +23,8 @@ class MotifA1(CausalLanguageModel):
 
     __remote_resource__ = {
         'repo': 'CodonProject/MotifA1-SFT',
-        'files': ['MotifA1_SFT.safetensors']
+        'files': ['MotifA1_SFT.safetensors'],
+        'repo_type': 'model'
     }
 
     def __init__(
