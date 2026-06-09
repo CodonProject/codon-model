@@ -6,7 +6,6 @@ from codon.motif import CausalLanguageModelOutput, MotifA1Tokenizer
 from codon.motif.config.a1 import build_config, build_optim_and_scheduler
 from codon.utils.plan import ContextTrainingPlanner, StatefulPlanRunner
 from codon.motif.data import MotifPrev1
-from codon.utils.tokens import PackedTokenizer
 from codon.utils.lifecycle import register_exit
 from codon.kit.train import run_sanity_check
 from tqdm import tqdm
@@ -34,12 +33,12 @@ model = Model(test)
 
 print('[*] Running torch.compile (Dynamic=True)...')
 
-compiled_model = torch.compile(model, dynamic=True) 
+compiled_model = model.compile(dynamic=True) 
 
 plan = ContextTrainingPlanner(
     model,
-    target_context=4096,
-    global_batch_tokens=8192*2
+    step_mode='min',
+    target_context=512
 ).generate_plan().print_report()
 
 config = build_config(plan.total_steps)
