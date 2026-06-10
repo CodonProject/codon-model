@@ -212,6 +212,7 @@ test_dataset/
 checkpoint/
 sft/
 motif.vocab
+dev/
 
 # Trae
 .trae/

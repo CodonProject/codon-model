@@ -38,6 +38,15 @@ class BasicModel(nn.Module, RemoteResourceMixin):
         try: return next(self.parameters()).device
         except StopIteration: return torch.device('cpu')
     
+    @property
+    def dtype(self) -> list[torch.dtype]:
+        '''
+        Get the unique data types of the model's parameters, preserving the order of occurrence.
+        Returns:
+            list[torch.dtype]: A list of unique dtypes ordered by their occurrence in the parameters.
+        '''
+        return list(dict.fromkeys(p.dtype for p in self.parameters()))
+    
     def set_checkpoint(self, value:bool) -> None:
         '''
         Enable or disable gradient checkpointing for the model and its sub-modules.
