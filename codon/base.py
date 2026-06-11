@@ -293,3 +293,19 @@ class BasicModel(nn.Module, RemoteResourceMixin):
             str: The generated random code.
         '''
         return utils_safecode(length=length, exclude_confusing=exclude_confusing)
+    
+    def trigger(self, func_name: str, *args, **kwargs) -> None:
+        '''
+        Traverse all sub-modules (including this model). If a sub-module is an
+        instance of BasicModel and has the attribute/method specified by func_name,
+        trigger/call it once.
+
+        Args:
+            func_name (str): The name of the method to trigger.
+            *args: Positional arguments to pass to the method.
+            **kwargs: Keyword arguments to pass to the method.
+        '''
+        for module in self.modules():
+            if isinstance(module, BasicModel):
+                func = getattr(module, func_name, None)
+                if func is not None and callable(func): func(*args, **kwargs)
