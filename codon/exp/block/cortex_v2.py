@@ -85,30 +85,30 @@ class ApicalPreProcessor(BasicModel):
 class SpikeFrequencyAdaptation(BasicModel):
     def __init__(self, num_features: int, tau_init: float = 0.9):
         super().__init__()
-
         self.num_features = num_features
-        
         self.raw_tau = nn.Parameter(torch.tensor(math.log(tau_init / (1.0 - tau_init))))
         self.raw_gain = nn.Parameter(torch.tensor(0.0))
-        
         self.register_buffer('trace', torch.zeros(1, num_features))
-        
+
     def reset_state(self):
-        self.trace.fill_(0.0)
-    
+        self.trace.zero_()
+
     def forward(self, z: torch.Tensor) -> torch.Tensor:
         amp = z.abs()
-        
-        tau = torch.sigmoid(self.raw_tau)
+        tau  = torch.sigmoid(self.raw_tau)
         gain = F.softplus(self.raw_gain)
         
-        if self.trace.shape[0] != z.shape[0]:
-            self.trace = torch.zeros(z.shape[0], self.num_features, dtype=amp.dtype, device=amp.device)
-        
-        self.trace = tau * self.trace + (1.0 - tau) * amp.detach()
-        
-        factor = 1.0 / (1.0 + gain * self.trace)
-            
+        if self.trace.shape != amp.shape:
+            self.trace = torch.zeros_like(amp)
+
+        prev = self.trace
+        ema  = tau * prev + (1.0 - tau) * amp.detach()
+
+        factor = 1.0 / (1.0 + gain * ema)
+
+        with torch.no_grad():
+            self.trace = ema.detach()
+
         return z * factor
 
 
@@ -181,6 +181,7 @@ class BACIntegration(BasicModel):
         self,
         num_features: int,
         work_type: Literal['ctc', 'pre'] = 'pre',
+        gate_phase: Literal['real', 'apical'] = 'apical',
         proj: bool = True
     ):
         super().__init__()
@@ -189,6 +190,7 @@ class BACIntegration(BasicModel):
 
         self.num_features = num_features
         self.work_type = work_type
+        self.gate_phase = gate_phase
         self.proj = proj
 
         self.q_proj = ComplexLinear(in_features=num_features, out_features=num_features, bias=False) if proj else nn.Identity()
@@ -215,7 +217,8 @@ class BACIntegration(BasicModel):
         x_basal_proj: torch.Tensor = self.k_proj(x_basal)
         x_original: torch.Tensor   = self.v_proj(x_original)
 
-        numerator = (x_apical * x_basal_proj.conj()).real
+        complex_interfere = x_apical * x_basal_proj.conj()
+        numerator = complex_interfere.real.clone()
         denominator = torch.abs(x_apical) * torch.abs(x_basal_proj) + 1e-8
         cos_diff = numerator / denominator
 
@@ -244,7 +247,12 @@ class BACIntegration(BasicModel):
             thal_gate = 0.5 * (torch.cos(torch.angle(x_original) - theta_thal) + 1.0)
             coincidence = coincidence * thal_gate
         
-        coincidence_complex = torch.complex(coincidence, torch.zeros_like(coincidence))
+        if self.gate_phase == 'apical':
+            # 相位旋转 / 空间变换任务: 门携带 apical 相位指令
+            coincidence_complex = torch.polar(coincidence, torch.angle(x_apical))
+        elif self.gate_phase == 'real':
+            # 选择性路由 / 滤波任务: 仅调振幅, 保留 x_original 原相位
+            coincidence_complex = torch.complex(coincidence, torch.zeros_like(coincidence))
         
         z_burst = coincidence_complex * x_original
         
@@ -268,6 +276,7 @@ class CorticalColumn(BasicModel):
         bac_proj: bool = True,
         phase_shift: bool = True,
         work_type: Literal['ctc', 'pre'] = 'pre',
+        gate_phase: Literal['real', 'apical'] = 'apical',
         track: bool = True
     ):
         super().__init__()
@@ -277,7 +286,7 @@ class CorticalColumn(BasicModel):
 
         self.apical = ApicalPreProcessor(num_features, proj=apical_proj)
         self.l23    = BasalIntegration(num_features, phase_shift=phase_shift, proj=basal_proj)
-        self.l5     = BACIntegration(num_features, proj=bac_proj, work_type=work_type)
+        self.l5     = BACIntegration(num_features, proj=bac_proj, work_type=work_type, gate_phase=gate_phase)
 
         self.last_apical_amp  = None
         self.last_l23_amp     = None
