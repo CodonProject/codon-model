@@ -53,11 +53,22 @@ class MemoryFootprint:
     trainable_parameters_bytes: int = 0
     buffers_bytes: int = 0
 
+    trainable_parameters_count: int = 0
+    gradients_bytes: int = 0 
+    optimizer_state_bytes: int = 0
+    temporary_cache_bytes: int = 0
+
     @property
     def total_bytes(self) -> int:
         '''Get the total memory footprint in bytes (parameters + buffers).'''
         return self.parameters_bytes + self.buffers_bytes
 
+    @property
+    def training_static_bytes(self) -> int:
+        return (self.parameters_bytes + self.buffers_bytes + 
+                self.gradients_bytes + self.optimizer_state_bytes + 
+                self.temporary_cache_bytes)
+    
     @staticmethod
     def _format_bytes(size_bytes: int) -> str:
         '''Helper to format bytes into a human-readable string.'''
@@ -90,14 +101,39 @@ class MemoryFootprint:
     def human_readable_total(self) -> str:
         '''Human-readable size of the total memory footprint (e.g., '362.68 MB').'''
         return self._format_bytes(self.total_bytes)
+    
+    @property
+    def human_readable_gradients(self) -> str:
+        return self._format_bytes(self.gradients_bytes)
+
+    @property
+    def human_readable_optimizer_state(self) -> str:
+        return self._format_bytes(self.optimizer_state_bytes)
+
+    @property
+    def human_readable_temporary_cache(self) -> str:
+        return self._format_bytes(self.temporary_cache_bytes)
+
+    @property
+    def human_readable_training_static(self) -> str:
+        return self._format_bytes(self.training_static_bytes)
 
     def __repr__(self) -> str:
-        return (
-            f'MemoryFootprint:\n'
-            f'  Parameters: {self.human_readable_parameters} (Trainable: {self.human_readable_trainable})\n'
-            f'  Buffers:    {self.human_readable_buffers}\n'
-            f'  Total:      {self.human_readable_total}'
-        )
+        lines = [
+            'MemoryFootprint:',
+            f'  Parameters:  {self.human_readable_parameters} (Trainable: {self.human_readable_trainable})',
+            f'  Buffers:     {self.human_readable_buffers}',
+            f'  Total:       {self.human_readable_total}',
+        ]
+        if self.trainable_parameters_count > 0:
+            lines += [
+                '  <Training static estimate (Adam[W], fp32, cache=15%)>',
+                f'  Gradients:   {self.human_readable_gradients}',
+                f'  Optimizer:   {self.human_readable_optimizer_state}',
+                f'  Temp Cache:  {self.human_readable_temporary_cache}',
+                f'  Static Peak: {self.human_readable_training_static}',
+            ]
+        return '\n'.join(lines)
 
 
 TBasicModel = TypeVar('TBasicModel', bound='BasicModel')
@@ -179,14 +215,36 @@ class BasicModel(nn.Module, RemoteResourceMixin):
         Estimate the memory footprint of the model parameters and buffers.
         Returns a MemoryFootprint dataclass.
         '''
-        param_mem = sum(p.numel() * p.element_size() for p in self.parameters())
-        trainable_mem = sum(p.numel() * p.element_size() for p in self.parameters() if p.requires_grad)
-        buffer_mem = sum(b.numel() * b.element_size() for b in self.buffers())
+        param_bytes = 0
+        trainable_bytes = 0
+        trainable_count = 0
+        buffer_bytes = 0
+
+        for p in self.parameters():
+            numel = p.numel()
+            elem_size = p.element_size()
+            param_bytes += numel * elem_size
+            if p.requires_grad:
+                trainable_bytes += numel * elem_size
+                trainable_count += numel
+
+        for b in self.buffers():
+            buffer_bytes += b.numel() * b.element_size()
+
+        gradients = trainable_bytes
         
+        optimizer_state = trainable_count * 8
+        
+        cache = int((param_bytes + optimizer_state) * 0.15)
+
         return MemoryFootprint(
-            parameters_bytes=param_mem,
-            trainable_parameters_bytes=trainable_mem,
-            buffers_bytes=buffer_mem
+            parameters_bytes=param_bytes,
+            trainable_parameters_bytes=trainable_bytes,
+            buffers_bytes=buffer_bytes,
+            trainable_parameters_count=trainable_count,
+            gradients_bytes=gradients,
+            optimizer_state_bytes=optimizer_state,
+            temporary_cache_bytes=cache,
         )
     
     @property
