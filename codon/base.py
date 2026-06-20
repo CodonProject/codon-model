@@ -180,9 +180,9 @@ class BasicModel(nn.Module, RemoteResourceMixin):
         except StopIteration:
             try: return next(self.buffers()).device
             except StopIteration: return torch.device('cpu')
-    
+        
     @property
-    def dtype(self) -> list[torch.dtype]:
+    def dtypes(self) -> list[torch.dtype]:
         '''
         Get the unique data types of the model's parameters, preserving the order of occurrence.
         Returns:
@@ -191,7 +191,7 @@ class BasicModel(nn.Module, RemoteResourceMixin):
         return list(dict.fromkeys(p.dtype for p in self.parameters()))
 
     @property
-    def main_dtype(self) -> torch.dtype:
+    def dtype(self) -> torch.dtype:
         '''Get the most common dtype of the model parameters.'''
         dtypes = [p.dtype for p in self.parameters()]
         if not dtypes: return torch.float32
@@ -261,6 +261,12 @@ class BasicModel(nn.Module, RemoteResourceMixin):
         return total_norm ** 0.5
     
     @property
+    def has_grad(self) -> bool:
+        for p in self.trainable_params:
+            if p.grad is not None: return True
+        return False
+    
+    @property
     def issue(self) -> ModelIssues:
         '''
         Get the current model issues (NaN/Inf in weights/gradients, and unused parameters).
@@ -295,7 +301,9 @@ class BasicModel(nn.Module, RemoteResourceMixin):
                         nan_grads.append(name)
                     if torch.isinf(param.grad).any():
                         inf_grads.append(name)
-                        
+        
+        unused_params = unused_params if self.has_grad else []
+
         issues = ModelIssues(
             model_class_name=self.__class__.__name__,
             nan_params=nan_params,
