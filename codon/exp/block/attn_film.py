@@ -93,8 +93,8 @@ class MultiHeadAttentionFiLM(BasicModel):
         
         if kv_states is not None and kv_states is not hidden_states:
             raise ValueError(
-                "MultiHeadAttentionFiLM only supports self-attention "
-                "where query and key/value source sequences are identical."
+                'MultiHeadAttentionFiLM only supports self-attention '
+                'where query and key/value source sequences are identical.'
             )
 
         batch_size, q_len, _ = hidden_states.shape
@@ -141,7 +141,7 @@ class MultiHeadAttentionFiLM(BasicModel):
             
         attn_output = apply_attention(
             Q, K, V, 
-            attention_mask=attention_mask, 
+            attention_mask=attention_mask,
             output_attentions=output_attentions,
             is_causal=self.is_causal,
             dropout=self.dropout if self.training else 0.0
@@ -152,7 +152,7 @@ class MultiHeadAttentionFiLM(BasicModel):
         output = output.transpose(1, 2).contiguous().view(batch_size, q_len, self.hidden_size)
         output = self.o_proj(output)
 
-        if self.use_gate: 
+        if self.use_gate:
             output = output * G
 
         return AttentionOutput(
