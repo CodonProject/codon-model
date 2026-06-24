@@ -415,8 +415,7 @@ class BasicModel(nn.Module, RemoteResourceMixin):
                         if not f.init:
                             try:
                                 setattr(obj, f.name, field_values[f.name])
-                            except AttributeError:
-                                pass
+                            except AttributeError: pass
                     return obj
                 except Exception:
                     return field_values
