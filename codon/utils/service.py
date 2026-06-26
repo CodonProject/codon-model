@@ -114,6 +114,7 @@ class Service:
         self.app.get('/models')(self.list_models)
         self.app.post('/v1/chat/completions')(self.chat_completions)
         self.app.post('/chat/completions')(self.chat_completions)
+        self.app.post('/v1/responses')(self.chat_completions)
 
     @staticmethod
     def _safe_next(iterator: Any) -> Optional[Any]:
