@@ -37,6 +37,7 @@ from .manifold import (
     BasicManifoldConv2d, RiemannianManifoldConv2d
 )
 from .fourier import MultiHeadFourier
+from .adanorm import AdaLayerNorm
 
 __all__ = [
     # attention
@@ -95,4 +96,6 @@ __all__ = [
     'RiemannianManifoldConv2d',
     # Fourier
     'MultiHeadFourier',
+    # adanorm
+    'AdaLayerNorm'
 ]
