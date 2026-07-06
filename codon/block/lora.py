@@ -1,5 +1,4 @@
-from codon.base import *
-import math
+from codon import *
 
 
 class BasicLoRA(BasicModel):

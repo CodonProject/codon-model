@@ -1,8 +1,6 @@
-import math
-
-from codon.base import *
-from codon.block.conv import ConvBlock
-from codon.ops.pixelshuffle import pixel_shuffle, unpixel_shuffle
+from codon import *
+from codon.block import ConvBlock
+from codon.ops   import pixel_shuffle, unpixel_shuffle
 
 from typing import Tuple, Optional
 

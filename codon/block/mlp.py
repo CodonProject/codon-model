@@ -1,4 +1,4 @@
-from codon.base import *
+from codon import *
 
 
 class MLP(BasicModel):

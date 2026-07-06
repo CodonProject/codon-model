@@ -1,8 +1,8 @@
-from codon.base  import *
+from codon import *
 from dataclasses import dataclass
 from typing      import Union
 
-from codon.block.mlp import MLP
+from codon.block import MLP
 
 
 @dataclass

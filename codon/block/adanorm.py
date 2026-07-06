@@ -1,5 +1,5 @@
-from codon.base import *
-from codon.block.mlp import MLP
+from codon import *
+from codon.block import MLP
 
 
 class AdaLayerNorm(BasicModel):

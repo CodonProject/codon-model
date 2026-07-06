@@ -1,7 +1,8 @@
-from codon.base import *
+from codon import *
 from codon.utils.theta  import validate_rope_config
+from codon.block import MLP
 
-import math
+from typing import Union
 
 
 class BasicEmbedding(BasicModel):
@@ -92,6 +93,104 @@ class SinusoidalEmbedding(BasicEmbedding):
             pe = self.pe[:, start_pos : start_pos + seq_len, :]
 
         return x + pe
+
+
+class TimestepSinusoidalEmbedding(BasicEmbedding):
+    '''
+    Sinusoidal embedding for timesteps.
+    '''
+
+    def __init__(self, model_dim: int, max_period: int = 10000):
+        '''
+        Initializes the timestep sinusoidal embedding module.
+
+        Args:
+            model_dim (int): The dimension of the model.
+            max_period (int, optional): Maximum period for the sinusoidal functions. Defaults to 10000.
+        '''
+        super().__init__()
+        self.model_dim = model_dim
+        self.max_period = max_period
+
+    def get_embedding(self, timesteps: Union[torch.Tensor, int]) -> torch.Tensor:
+        '''
+        Forward pass for timestep sinusoidal embedding.
+
+        Args:
+            timesteps (Union[torch.Tensor, int]): Input timesteps. Can be a tensor or an integer.
+
+        Returns:
+            torch.Tensor: Sinusoidal embedding for the given timesteps. Shape: [Batch_Size, dim].
+        '''
+        if isinstance(timesteps, int):
+            timesteps = torch.tensor([timesteps], dtype=torch.float32)
+        else:
+            timesteps = timesteps.float()
+        
+        half_dim = self.model_dim // 2
+        exponent = -math.log(self.max_period) * torch.arange(half_dim, dtype=torch.float32) / half_dim
+        freqs = torch.exp(exponent)
+        arg = timesteps[:, None] * freqs[None, :]
+        emb = torch.cat([torch.sin(arg), torch.cos(arg)], dim=-1)
+
+        if self.model_dim % 2:
+            emb = torch.cat([emb, torch.zeros(timesteps.size(0), 1)], dim=-1)
+        
+        return emb
+    
+    def forward(self, x: torch.Tensor, timesteps: Union[torch.Tensor, int], *args, **kwargs) -> torch.Tensor:
+        emb = self.get_embedding(timesteps)
+        return x + emb
+
+
+class TimestepMLPEmbedding(BasicEmbedding):
+
+    def __init__(
+        self,
+        model_dim: int,
+        embed_dim: int = 512,
+        max_period: int = 10000
+
+    ):
+        '''
+        Initializes the timestep MLP embedding module.
+
+        Args:
+            model_dim (int): The dimension of the model.
+            embed_dim (int, optional): Dimension of the intermediate embedding. Defaults to 512.
+            max_period (int, optional): Maximum period for the sinusoidal functions. Defaults to 10000.
+        '''
+        super().__init__()
+        self.model_dim  = model_dim
+        self.embed_dim  = embed_dim
+        self.max_period = max_period
+
+        self.sinusoidal_embedding = TimestepSinusoidalEmbedding(self.embed_dim, max_period)
+
+        self.mlp = MLP(
+            in_dim=self.embed_dim,
+            hidden_dim=self.model_dim,
+            out_dim=self.model_dim,
+            activation='silu',
+        )
+    
+    def get_embedding(self, timesteps: Union[torch.Tensor, int]) -> torch.Tensor:
+        '''
+        Forward pass for timestep MLP embedding.
+
+        Args:
+            timesteps (Union[torch.Tensor, int]): Input timesteps. Can be a tensor or an integer.
+        
+        Returns:
+            torch.Tensor: MLP embedding for the given timesteps. Shape: [Batch_Size, model_dim].
+        '''
+        sinusoidal_emb = self.sinusoidal_embedding(timesteps)
+        mlp_emb = self.mlp(sinusoidal_emb)
+        return mlp_emb
+    
+    def forward(self, x: torch.Tensor, timesteps: Union[torch.Tensor, int], *args, **kwargs) -> torch.Tensor:
+        emb = self.get_embedding(timesteps)
+        return x + emb
 
 
 class BasicRotaryEmbedding(BasicEmbedding):

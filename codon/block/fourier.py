@@ -1,6 +1,5 @@
-from codon.base import *
-from codon.ops.attention import AttentionOutput
-from codon.ops.fourier   import apply_fourier_mixing
+from codon import *
+from codon.ops import AttentionOutput, apply_fourier_mixing
 
 
 class MultiHeadFourier(BasicModel):

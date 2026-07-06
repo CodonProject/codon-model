@@ -1,4 +1,4 @@
-from codon.base import *
+from codon import *
 
 from dataclasses import dataclass
 from typing import Tuple

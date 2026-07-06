@@ -1,7 +1,5 @@
-from codon.base import *
-from typing     import Tuple, Union, List
-
-import math
+from codon  import *
+from typing import Tuple, Union, List
 
 
 def calculate_causal_layer(step: int, kernel_size: int = 3) -> Tuple[int, int]:

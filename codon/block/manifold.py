@@ -1,9 +1,9 @@
-from codon.base import *
+from codon import *
 
 from typing import Tuple
 from dataclasses import dataclass
 
-from codon.ops.manifold import riemannian_manifold_linear, riemannian_manifold_conv2d
+from codon.ops import riemannian_manifold_linear, riemannian_manifold_conv2d
 
 
 @dataclass

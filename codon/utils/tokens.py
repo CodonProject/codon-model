@@ -12,7 +12,7 @@ from transformers import PreTrainedTokenizerFast
 
 from typing import Union, Optional, Generator, Any, List, Dict
 
-from codon.builtins.mixins.remote import RemoteResourceMixin
+from codon.mixin import RemoteResourceMixin
 
 
 @dataclass
