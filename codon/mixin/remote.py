@@ -1,11 +1,11 @@
 from typing import Literal, Optional, Dict, Any, TypeVar, Union
-from codon.builtins.repo import Repo
-
+from codon.builtin.repo import Repo
+from codon.mixin.base   import CodonMixin
 
 
 TRemoteResource = TypeVar('TRemoteResource', bound='RemoteResourceMixin')
 
-class RemoteResourceMixin:
+class RemoteResourceMixin(CodonMixin):
     '''
     Mixin for loading resources from remote repositories.
 

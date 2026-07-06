@@ -1,11 +1,12 @@
 import os
 import hashlib
 from typing import Optional, List, Dict, Literal, Union, Any
-from codon.builtins.download import (
+from codon.builtin.download import (
     CACHE_DIR,
     select_best_platform,
     download_file
 )
+
 
 PLATFORM_TEMPLATES = {
     'modelscope': {

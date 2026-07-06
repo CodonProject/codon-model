@@ -16,6 +16,14 @@ from .bio import (
 from .pixelshuffle import pixel_shuffle, unpixel_shuffle
 from .manifold import riemannian_manifold_linear, riemannian_manifold_conv2d
 from .fourier import apply_fourier_mixing
+from .complex import (
+    complex_relu,
+    complex_silu,
+    complex_sigmoid,
+    mod_relu,
+    mod_silu,
+    mod_sigmoid
+)
 
 __all__ = [
     # attention
@@ -42,4 +50,11 @@ __all__ = [
     'riemannian_manifold_conv2d',
     # fourier
     'apply_fourier_mixing'
+    # complex
+    'complex_relu',
+    'complex_silu',
+    'complex_sigmoid',
+    'mod_relu',
+    'mod_silu',
+    'mod_sigmoid'
 ]
