@@ -1,5 +1,5 @@
-import torch
-from typing import Tuple
+from codon import *
+
 
 def _prepare_tensors(input_tensor: torch.Tensor, output_tensor: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, int]:
     '''

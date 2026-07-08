@@ -2,8 +2,6 @@ from codon import *
 from codon.block import ConvBlock
 from codon.ops   import pixel_shuffle, unpixel_shuffle
 
-from typing import Tuple, Optional
-
 
 class PixelShuffleUpSample(BasicModel):
     '''

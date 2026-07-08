@@ -1,7 +1,4 @@
-from codon.base import *
-from typing import Literal
-
-import math
+from codon import *
 
 
 class ComplexLinear(BasicModel):

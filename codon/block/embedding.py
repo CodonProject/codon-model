@@ -2,15 +2,13 @@ from codon import *
 from codon.utils.theta  import validate_rope_config
 from codon.block import MLP
 
-from typing import Union
-
 
 class BasicEmbedding(BasicModel):
     '''
     Base class for Positional Embeddings.
     '''
 
-    def forward(self, x: torch.Tensor, positions: torch.Tensor = None, start_pos: int = 0) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, positions: torch.Tensor = None, start_pos: int = 0, *args, **kwargs) -> torch.Tensor:
         '''
         Forward pass for positional embedding.
 
@@ -72,7 +70,7 @@ class SinusoidalEmbedding(BasicEmbedding):
         pe = pe.unsqueeze(0)
         self.register_buffer('pe', pe, persistent=False)
 
-    def forward(self, x: torch.Tensor, positions: torch.Tensor = None, start_pos: int = 0) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, positions: torch.Tensor = None, start_pos: int = 0, *args, **kwargs) -> torch.Tensor:
         '''
         Forward pass.
 
@@ -95,7 +93,25 @@ class SinusoidalEmbedding(BasicEmbedding):
         return x + pe
 
 
-class TimestepSinusoidalEmbedding(BasicEmbedding):
+class TimestepEmbedding(BasicEmbedding):
+    '''
+    Base class for timestep embeddings.
+    '''
+
+    def get_embedding(self, timesteps: Union[torch.Tensor, int]) -> torch.Tensor:
+        '''
+        Get the embedding for the given timesteps.
+
+        Args:
+            timesteps (Union[torch.Tensor, int]): Input timesteps. Can be a tensor or an integer.
+        
+        Returns:
+            torch.Tensor: Embedding for the given timesteps. Shape: [Batch_Size, dim].
+        '''
+        raise NotImplementedError
+
+
+class TimestepSinusoidalEmbedding(TimestepEmbedding):
     '''
     Sinusoidal embedding for timesteps.
     '''
@@ -143,7 +159,7 @@ class TimestepSinusoidalEmbedding(BasicEmbedding):
         return x + emb
 
 
-class TimestepMLPEmbedding(BasicEmbedding):
+class TimestepMLPEmbedding(TimestepEmbedding):
 
     def __init__(
         self,
@@ -274,7 +290,7 @@ class RotaryEmbedding(BasicRotaryEmbedding):
         '''
         super().__init__(model_dim, max_len, base)
 
-    def forward(self, x: torch.Tensor, positions: torch.Tensor = None, start_pos: Union[int, torch.Tensor] = 0) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, positions: torch.Tensor = None, start_pos: Union[int, torch.Tensor] = 0, *args, **kwargs) -> torch.Tensor:
         '''
         Apply rotary positional encoding.
         
@@ -386,7 +402,7 @@ class InterleavedRotaryEmbedding(BasicRotaryEmbedding):
             
         self.register_buffer('interleave_idx', torch.tensor(idx, dtype=torch.long), persistent=False)
 
-    def forward(self, x: torch.Tensor, positions: torch.Tensor = None, start_pos: int = 0) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, positions: torch.Tensor = None, start_pos: int = 0, *args, **kwargs) -> torch.Tensor:
         '''
         Apply multimodal rotary positional encoding.
 

@@ -1,7 +1,5 @@
 from codon import *
 
-from typing import Optional, List
-
 
 class LowRankFusion(BasicModel):
     '''

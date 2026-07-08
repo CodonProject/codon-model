@@ -1,5 +1,4 @@
 from codon import *
-
 from codon.utils import safecode
 from codon.block import (
     BasicEmbedding,
@@ -8,9 +7,6 @@ from codon.block import (
     MLP,
     MoE, MoEOutput
 )
-
-from typing import Union, Optional, Tuple
-from dataclasses import dataclass
 
 
 @dataclass

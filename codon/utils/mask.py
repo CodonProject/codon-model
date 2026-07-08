@@ -7,35 +7,6 @@ from enum        import Enum, auto
 from typing import Union
 
 
-class MaskMode(Enum):
-    '''
-    Enumeration of different masking modes for TokenMask.
-
-    Each mode defines how the sequence is masked relative to the special token(s).
-    The mask values are: 0 for masked, 1 for unmasked (kept).
-
-    Attributes:
-        FIRST_MASK_PRE: Find the first occurrence of the special token.
-            Mask tokens before and including the special token (0). Keep the rest (1).
-        FIRST_MASK_POST: Find the first occurrence of the special token.
-            Keep tokens before and including the special token (1). Mask the rest (0).
-        LAST_MASK_PRE: Find the last occurrence of the special token.
-            Mask tokens before and including the special token (0). Keep the rest (1).
-        LAST_MASK_POST: Find the last occurrence of the special token.
-            Keep tokens before and including the special token (1). Mask the rest (0).
-        ALL_MASK_FIRST: Find all occurrences.
-            The first segment (ending with the special token) is masked (0), then alternates.
-        ALL_KEEP_FIRST: Find all occurrences.
-            The first segment (ending with the special token) is kept (1), then alternates.
-    '''
-    FIRST_MASK_PRE  = auto()
-    FIRST_MASK_POST = auto()
-    LAST_MASK_PRE   = auto()
-    LAST_MASK_POST  = auto()
-    ALL_MASK_FIRST  = auto()
-    ALL_KEEP_FIRST  = auto()
-
-
 def make_padding_mask(src: torch.Tensor, pad_idx: int = 0) -> torch.Tensor:
     '''
     Creates a padding mask.
@@ -124,6 +95,36 @@ def make_sliding_window_mask(
 
     mask = pad_mask & window_mask
     return mask
+
+
+class MaskMode(Enum):
+    '''
+    Enumeration of different masking modes for TokenMask.
+
+    Each mode defines how the sequence is masked relative to the special token(s).
+    The mask values are: 0 for masked, 1 for unmasked (kept).
+
+    Attributes:
+        FIRST_MASK_PRE: Find the first occurrence of the special token.
+            Mask tokens before and including the special token (0). Keep the rest (1).
+        FIRST_MASK_POST: Find the first occurrence of the special token.
+            Keep tokens before and including the special token (1). Mask the rest (0).
+        LAST_MASK_PRE: Find the last occurrence of the special token.
+            Mask tokens before and including the special token (0). Keep the rest (1).
+        LAST_MASK_POST: Find the last occurrence of the special token.
+            Keep tokens before and including the special token (1). Mask the rest (0).
+        ALL_MASK_FIRST: Find all occurrences.
+            The first segment (ending with the special token) is masked (0), then alternates.
+        ALL_KEEP_FIRST: Find all occurrences.
+            The first segment (ending with the special token) is kept (1), then alternates.
+    '''
+    FIRST_MASK_PRE  = auto()
+    FIRST_MASK_POST = auto()
+    LAST_MASK_PRE   = auto()
+    LAST_MASK_POST  = auto()
+    ALL_MASK_FIRST  = auto()
+    ALL_KEEP_FIRST  = auto()
+
 
 
 @dataclass

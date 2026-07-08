@@ -1,9 +1,4 @@
-import torch.nn.functional as F
-import torch
-import math
-
-from dataclasses import dataclass
-from typing      import Optional, Tuple
+from codon import *
 
 
 @dataclass

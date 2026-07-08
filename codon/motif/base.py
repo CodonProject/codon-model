@@ -1,8 +1,4 @@
-from codon.base import *
-
-from typing import Optional, List, Tuple, Union
-from dataclasses import dataclass
-import torch.nn.functional as F
+from codon import *
 import json
 
 

@@ -4,6 +4,14 @@ import torch.optim as optim
 import torch.nn as nn
 import torch.nn.functional as F
 
+from typing import (
+    List, Dict, Tuple, Set,
+    Optional, Any, Union, Callable, Generator, Iterable, Iterator,
+    TypeVar, Type, Literal,
+    TYPE_CHECKING
+)
+from dataclasses import dataclass, field
+
 from .base import BasicModel
 
 

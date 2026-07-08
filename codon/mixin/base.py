@@ -36,7 +36,7 @@ class CodonMixin:
     Base class for all Codon mixins.
     '''
 
-    def attach(self, instance: TOriginal) -> TOriginal:
+    def mixin_attach(self, instance: TOriginal) -> TOriginal:
         '''
         Attach this mixin to an existing instance.
 

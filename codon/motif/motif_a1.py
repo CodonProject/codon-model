@@ -1,13 +1,10 @@
-from codon.base import *
-
+from codon import *
 from codon.block.transformer import TransformerDenseDecoder
 from codon.block.embedding   import RotaryEmbedding
 from codon.utils.tokens      import PackedTokenizer
 from codon.utils.onnx        import patch_rms_norm
 
 from .base import CausalLanguageModel, CausalLanguageModelOutput
-
-from typing import Optional, List, Tuple
 
 
 class MotifA1Tokenizer(PackedTokenizer):
