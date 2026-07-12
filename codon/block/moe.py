@@ -1,5 +1,5 @@
 from codon import *
-from codon.block import MLP
+from codon.block.mlp import MLP
 
 
 @dataclass

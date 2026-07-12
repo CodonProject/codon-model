@@ -1,11 +1,13 @@
 from codon import *
 from codon.utils import safecode
-from codon.block import (
-    BasicEmbedding,
-    MultiHeadAttention, AttentionOutput,
-    MultiHeadFourier,
-    MLP,
-    MoE, MoEOutput
+
+from codon.block.embedding import BasicEmbedding
+from codon.block.attention import MultiHeadAttention, AttentionOutput
+from codon.block.fourier   import MultiHeadFourier
+from codon.block.mlp       import MLP
+from codon.block.moe       import MoE, MoEOutput
+from codon.block.norm      import(
+    RMSNorm
 )
 
 
@@ -61,9 +63,9 @@ class _TransformerDecoder(BasicModel):
         num_kv_heads (int): Number of KV heads for GQA.
         use_qk_norm (bool): Whether to use QK normalization.
         use_attn_gate (bool): Whether to use attention gating.
-        attn_norm (nn.RMSNorm): Pre-attention normalization.
+        attn_norm (codon.RMSNorm): Pre-attention normalization.
         attn (MultiHeadAttention): Multi-head attention module.
-        fn_norm (nn.RMSNorm): Pre-feed-forward normalization.
+        fn_norm (codon.RMSNorm): Pre-feed-forward normalization.
         dropout (nn.Dropout): Dropout layer.
     '''
     def __init__(
@@ -101,7 +103,7 @@ class _TransformerDecoder(BasicModel):
         self.attn_bias = attn_bias
         self.attn_type = attn_type.lower()
 
-        self.attn_norm = nn.RMSNorm(model_dim)
+        self.attn_norm = RMSNorm(model_dim)
         
         if self.attn_type in ['multihead', 'mha']:
             self.attn = MultiHeadAttention(
@@ -122,9 +124,9 @@ class _TransformerDecoder(BasicModel):
             )
 
         else:
-            raise ValueError(f"Unsupported attn_type: {attn_type}. Choose from 'multihead', 'linear', or 'gated_linear'.")
+            raise ValueError(f"Unsupported attn_type: {attn_type}. Choose from 'multihead', or 'fourier'.")
 
-        self.fn_norm = nn.RMSNorm(model_dim)
+        self.fn_norm = RMSNorm(model_dim)
         self.dropout = nn.Dropout(dropout)
     
     def forward(

@@ -421,11 +421,11 @@ class FusedInstanceNorm2d(BasicModel):
 
 # 6. 权重级别正则化 (SpectralNorm & WSConv2d)
 
-class ExportableSpectralNorm(nn.Module):
+class ExportableSpectralNorm(BasicModel):
     """
     无 Hook 且对 JIT / ONNX 导出友好的谱归一化 (Spectral Normalization)。
     """
-    def __init__(self, module: nn.Module, name: str = 'weight', n_power_iterations: int = 1, eps: float = 1e-12):
+    def __init__(self, module: Union[nn.Module, BasicModel], name: str = 'weight', n_power_iterations: int = 1, eps: float = 1e-12):
         super().__init__()
         self.module = module
         self.name = name

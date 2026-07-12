@@ -1,5 +1,5 @@
 from codon import *
-from codon.block import BasicEmbedding
+from codon.block.embedding import BasicEmbedding
 from codon.ops import (
     AttentionOutput,
     apply_attention

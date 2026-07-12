@@ -1,6 +1,6 @@
 from codon import *
-from codon.block import ConvBlock
-from codon.ops   import pixel_shuffle, unpixel_shuffle
+from codon.block.conv import ConvBlock
+from codon.ops import pixel_shuffle, unpixel_shuffle
 
 
 class PixelShuffleUpSample(BasicModel):

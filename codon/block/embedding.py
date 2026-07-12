@@ -1,6 +1,6 @@
 from codon import *
-from codon.utils.theta  import validate_rope_config
-from codon.block import MLP
+from codon.utils.theta import validate_rope_config
+from codon.block.mlp   import MLP
 
 
 class BasicEmbedding(BasicModel):
