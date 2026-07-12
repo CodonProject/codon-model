@@ -1,4 +1,5 @@
 from codon import *
+from codon.block.activation import SwiGLU
 
 
 class MLP(BasicModel):
@@ -41,25 +42,33 @@ class MLP(BasicModel):
         super().__init__()
         
         out_features = out_features or in_features
-
         self.in_features = in_features
         self.hidden_features = hidden_features
         self.out_features = out_features
         self.bias = bias
-        self.use_gate = use_gate
         self.dropout_p = dropout
         self.dropout = nn.Dropout(dropout)
         
-        if act_layer.lower() == 'silu':
+        act_layer_lower = act_layer.lower()
+        if act_layer_lower == 'swiglu':
+            self.act = SwiGLU(dim=-1)
+            self.use_gate = True 
+        elif act_layer_lower == 'silu':
             self.act = nn.SiLU()
-        elif act_layer.lower() == 'gelu':
+            self.use_gate = use_gate
+        elif act_layer_lower == 'gelu':
             self.act = nn.GELU()
-        elif act_layer.lower() == 'relu':
+            self.use_gate = use_gate
+        elif act_layer_lower == 'relu':
             self.act = nn.ReLU()
+            self.use_gate = use_gate
         else:
             raise NotImplementedError(f'Activation {act_layer} not implemented')
-
-        if use_gate:
+        
+        if act_layer_lower == 'swiglu':
+            self.gate_up_proj = nn.Linear(in_features, 2 * hidden_features, bias=bias)
+            self.down_proj = nn.Linear(hidden_features, out_features, bias=bias)
+        elif self.use_gate:
             self.gate_proj = nn.Linear(in_features, hidden_features, bias=bias)
             self.up_proj = nn.Linear(in_features, hidden_features, bias=bias)
             self.down_proj = nn.Linear(hidden_features, out_features, bias=bias)
@@ -78,7 +87,12 @@ class MLP(BasicModel):
         Returns:
             torch.Tensor: Output tensor.
         '''
-        if self.use_gate:
+        if isinstance(self.act, SwiGLU):
+            x = self.gate_up_proj(x)
+            x = self.act(x)
+            x = self.down_proj(x)
+            return x
+        elif self.use_gate:
             return self.down_proj(self.act(self.gate_proj(x)) * self.up_proj(x))
         else:
             x = self.fc1(x)
@@ -122,5 +136,5 @@ class MLP(BasicModel):
             bias=bias,
             use_gate=True,
             dropout=dropout,
-            act_layer='silu'
+            act_layer='swiglu'
         )
