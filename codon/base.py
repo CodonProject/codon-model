@@ -202,6 +202,10 @@ class BasicModel(nn.Module, RemoteResourceMixin):
         return self.get_params(trainable_only=True)
     
     @property
+    def all_params(self) -> Iterator[torch.nn.Parameter]:
+        return self.get_params()
+    
+    @property
     def unused_params(self) -> list[str]:
         '''
         Find parameters that require gradients but did not receive any (grad is None).
@@ -330,7 +334,7 @@ class BasicModel(nn.Module, RemoteResourceMixin):
         if was_training: self.train()
 
     @contextlib.contextmanager
-    def autocast_context(self, enabled: bool = True, dtype: torch.dtype = torch.float16) -> Iterator[None]:
+    def autocast(self, enabled: bool = True, dtype: torch.dtype = torch.float16, is_accumulation_step: bool = False) -> Iterator[None]:
         '''
         Context manager for PyTorch Automatic Mixed Precision (AMP).
         '''
@@ -339,21 +343,10 @@ class BasicModel(nn.Module, RemoteResourceMixin):
         if device_type not in ['cuda', 'cpu']:
             device_type = 'cuda' if torch.cuda.is_available() else 'cpu'
             
-        with torch.amp.autocast(device_type=device_type, enabled=enabled, dtype=dtype): yield
-
-    @contextlib.contextmanager
-    def accumulation_context(self, is_accumulation_step: bool) -> Iterator[None]:
-        '''
-        Context manager for gradient accumulation. 
-        If in DDP mode and it is an accumulation step (not the step to step optimizer),
-        it disables gradient synchronization to speed up training.
-        
-        Args:
-            is_accumulation_step (bool): True if this forward/backward pass is an accumulation step.
-        '''
-        if is_accumulation_step and hasattr(self, 'no_sync') and callable(getattr(self, 'no_sync')):
-            with self.no_sync(): yield
-        else: yield
+        with torch.amp.autocast(device_type=device_type, enabled=enabled, dtype=dtype):
+            if is_accumulation_step and hasattr(self, 'no_sync') and callable(getattr(self, 'no_sync')):
+                with self.no_sync(): yield
+            else: yield
     
     @contextlib.contextmanager
     def capture_activations(
@@ -520,7 +513,7 @@ class BasicModel(nn.Module, RemoteResourceMixin):
         
         return self
     
-    def set_checkpoint(self, value:bool) -> None:
+    def set_checkpoint(self: TBasicModel, value:bool) -> TBasicModel:
         '''
         Enable or disable gradient checkpointing for the model and its sub-modules.
 
@@ -531,6 +524,8 @@ class BasicModel(nn.Module, RemoteResourceMixin):
         for model in self.modules():
             if isinstance(model, BasicModel) and model is not self:
                 model.gradient_checkpointing = value
+        
+        return self
 
     def checkpoint(self, function:Callable, *args, **kwargs) -> Any:
         '''
@@ -863,8 +858,8 @@ class BasicModel(nn.Module, RemoteResourceMixin):
         finally:
             for param, original_state in target_params: param.requires_grad = original_state
     
-    def compile(self: TBasicModel, dynamic:bool|None=None) -> TBasicModel:
-        return torch.compile(self, dynamic=dynamic)
+    def compile(self: TBasicModel, *args, **kwargs) -> TBasicModel:
+        return torch.compile(self, *args, **kwargs)
     
     def safecode(self: TBasicModel, length: int = 4, exclude_confusing: bool = False) -> str:
         '''

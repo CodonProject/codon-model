@@ -15,6 +15,6 @@ from dataclasses import dataclass, field
 from .base import BasicModel
 
 
-__version__ = '0.0.6a3'
+__version__ = '0.0.6'
 
 __seed__: int | None = None

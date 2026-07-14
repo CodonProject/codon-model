@@ -250,6 +250,7 @@ class ConvBlock(BasicModel):
         dropout: float = 0.0,
         pre_norm: bool = False,
         leaky_relu: float = 0.1,
+        padding_mode: Literal['zeros', 'reflect', 'replicate', 'circular'] = 'zeros',
     ):
         '''
         Initializes the ConvBlock.
@@ -273,6 +274,7 @@ class ConvBlock(BasicModel):
         super().__init__()
         
         self.pre_norm = pre_norm
+        self.padding_mode = padding_mode
         
         if dim == 1:
             conv_class = nn.Conv1d
@@ -284,7 +286,7 @@ class ConvBlock(BasicModel):
             raise ValueError(f'Unsupported dimension: {dim}')
             
         self.conv = conv_class(
-            in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias=bias
+            in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias=bias, padding_mode=padding_mode
         )
         
         self.norm = None
