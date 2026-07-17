@@ -1,10 +1,4 @@
-import torch
-import torch.nn as nn
-import math
-
-from typing import List, Tuple, Optional
-
-from codon.base import BasicModel
+from codon import *
 from codon.block.conv import ConvBlock, ResBasicBlock
 
 

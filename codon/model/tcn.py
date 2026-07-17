@@ -1,7 +1,6 @@
-from codon.base import *
-from typing     import List
-
+from codon import *
 from codon.block.conv import CausalConv1d, calculate_causal_layer
+
 
 class TemporalConvNet(BasicModel):
     '''

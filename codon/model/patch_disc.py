@@ -1,6 +1,4 @@
-import math
-
-from codon.base import *
+from codon import *
 from codon.block.conv import ConvBlock
 
 
