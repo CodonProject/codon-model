@@ -1,4 +1,4 @@
-from codon.base import *
+from codon import *
 
 from codon.model import ResNet
 from codon.block import (

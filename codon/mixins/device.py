@@ -1,0 +1,31 @@
+import torch
+from typing import Union
+
+from codon.mixins._types import TModule
+
+
+class DeviceDtypeMixin:
+    @property
+    def device(self) -> torch.device:
+        try: return next(self.parameters()).device
+        except StopIteration:
+            try: return next(self.buffers()).device
+            except StopIteration: return torch.device('cpu')
+        
+    @property
+    def dtypes(self) -> list[torch.dtype]:
+        return list(dict.fromkeys(p.dtype for p in self.parameters()))
+
+    @property
+    def dtype(self) -> torch.dtype:
+        dtypes = [p.dtype for p in self.parameters()]
+        return max(set(dtypes), key=dtypes.count) if dtypes else torch.float32
+
+    def to_precision(self: TModule, dtype: torch.dtype) -> TModule:
+        self.to(dtype=dtype); return self
+
+    def to_device(self: TModule, device: Union[str, torch.device]) -> TModule:
+        self.to(device=device); return self
+    
+    def compile(self: TModule, *args, **kwargs) -> TModule:
+        return torch.compile(self, *args, **kwargs)

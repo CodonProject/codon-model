@@ -1,8 +1,4 @@
-from codon.base import *
-
-from typing import List, Optional
-from dataclasses import dataclass
-
+from codon import *
 from codon.utils.data.base import CodonDataset
 
 @dataclass

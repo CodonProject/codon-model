@@ -1,10 +1,6 @@
-import torch.nn.functional as F
-
-from codon.base import *
+from codon import *
 from codon.block.mlp import MLP
 from codon.block.moe import *
-
-import math
 
 
 class ParallelExpert(nn.Module):

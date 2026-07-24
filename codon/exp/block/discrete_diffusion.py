@@ -3,8 +3,6 @@ from codon.block import (
     MLP, AdaLayerNorm, MultiHeadAttention
 )
 
-from typing import Optional, Tuple
-
 
 class BidirectionalBlock(BasicModel):
     def __init__(

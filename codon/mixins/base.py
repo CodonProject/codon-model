@@ -35,19 +35,3 @@ class CodonMixin:
     '''
     Base class for all Codon mixins.
     '''
-
-    def mixin_attach(self, instance: TOriginal) -> TOriginal:
-        '''
-        Attach this mixin to an existing instance.
-
-        Args:
-            instance: The instance to which the mixin will be attached.
-
-        Returns:
-            The instance with the mixin attached.
-        '''
-        instance = mixin(instance, self.__class__)
-        for k, v in self.__dict__.items():
-            if not hasattr(instance, k):
-                setattr(instance, k, v)
-        return instance

@@ -1,5 +1,5 @@
+from codon import *
 from codon.block import BasicManifoldLinear
-from codon.base  import *
 
 
 class ExpManifoldLinear(BasicManifoldLinear):

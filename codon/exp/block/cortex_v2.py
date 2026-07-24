@@ -1,4 +1,4 @@
-from codon.base import *
+from codon import *
 from codon.block.complex import ComplexLinear, ModReLU, PhaseShift
 from typing import Optional, Literal
 import math

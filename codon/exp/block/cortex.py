@@ -1,7 +1,6 @@
-from codon.base import *
+from codon import *
 from codon.block.complex import ComplexLinear, ModReLU, PhaseShift
 from codon.exp.block.phase_attn import PhaseCrossAttention
-from typing import Optional, Union
 
 
 @torch.no_grad()

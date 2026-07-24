@@ -1,4 +1,4 @@
-from codon.base  import *
+from codon import *
 from codon.block import (
     MLP, MultiHeadAttention, AttentionOutput,
     BasicEmbedding, TransformerDecoderOutput,

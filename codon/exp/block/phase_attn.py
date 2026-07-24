@@ -1,7 +1,5 @@
-from codon.base import *
+from codon import *
 from codon.block.complex import ComplexLinear
-
-from typing import Literal
 
 
 class PhaseCrossAttention(BasicModel):

@@ -1,4 +1,4 @@
-from codon.base  import *
+from codon import *
 from codon.block import BasicEmbedding, FiLM
 from codon.ops.attention import AttentionOutput, apply_attention
 

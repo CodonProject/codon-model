@@ -3,16 +3,15 @@ import os
 import zipfile
 import copy
 from dataclasses import dataclass
-from tokenizers  import Tokenizer, pre_tokenizers, decoders
-from tokenizers  import normalizers
-from tokenizers.models   import BPE
+from tokenizers  import Tokenizer, pre_tokenizers, decoders, normalizers
+from tokenizers.models import BPE
 from tokenizers.trainers import BpeTrainer
 
 from transformers import PreTrainedTokenizerFast
 
 from typing import Union, Optional, Generator, Any, List, Dict
 
-from codon.mixin import RemoteResourceMixin
+from codon.mixins import RemoteResourceMixin
 
 
 @dataclass
@@ -38,112 +37,10 @@ class TokenizerTrainerResult:
         )
 
 
-core_tokens = ['[pad]', '[unk]', '[sep]', '[cls]']
-chat_tokens = [
-    '[im_start]', '[im_end]',
-    '[system]', '[user]', '[model]', '[tool]',
-    '[interruption]', '[fim]',
-]
-reasoning_tokens = ['[cot_start]', '[cot_end]']
-code_tokens = ['[fim_pre]', '[fim_mid]', '[fim_suf]']
-tool_tokens = ['[tool_start]', '[tool_name]', '[tool_args]', '[tool_end]']
-
-multimodal_tokens = [
-    '[image_start]', '[image_pad]', '[image_end]',
-    '[audio_start]', '[audio_pad]', '[audio_end]', 
-    '[video_start]', '[video_pad]', '[video_end]'
-]
-
-base_special_tokens = (
-    core_tokens + 
-    chat_tokens + 
-    reasoning_tokens + 
-    code_tokens + 
-    tool_tokens + 
-    multimodal_tokens
-)
-
-base_special_tokens += [f'[unused_{i}]' for i in range(len(base_special_tokens), 64)]
-
-chat_template = (
-    "{% for message in messages %}"
-        "{{ '[im_start]' }}"
-
-        "{% if message['role'] == 'fim' %}"
-            "{{ '[fim]' }}"
-            "{{ '[fim_pre]' + message['prefix'] + '[fim_suf]' + message['suffix'] + '[fim_mid]' }}"
-            
-            "{% if message['middle'] %}"
-                "{{ message['middle'] + '[im_end]' }}"
-            "{% endif %}"
-            
-        "{% else %}"
-            
-            "{% if message['role'] in ['system', 'instruction', 'developer'] %}"
-                "{{ '[system]' }}"
-            "{% elif message['role'] == 'user' %}"
-                "{{ '[user]' }}"
-            "{% elif message['role'] in ['assistant', 'model'] %}"
-                "{{ '[model]' }}"
-                "{% set thought_content = message['thought'] or message['reasoning_content'] %}"
-                "{% if thought_content %}"
-                    "{{ '[cot_start]' + thought_content + '[cot_end]' }}"
-                "{% else %}"
-                    "{{ '[cot_start][cot_end]' }}"
-                "{% endif %}"
-            "{% elif message['role'] == 'tool' %}"
-                "{{ '[tool]' }}"
-            "{% else %}"
-                "{{ message['role'] }}"
-            "{% endif %}"
-
-            "{% if message['content'] is defined and message['content'] is not none %}"
-                "{% if message['content'] is string %}"
-                    "{{ message['content'] }}"
-                "{% else %}"
-                    "{% for item in message['content'] %}"
-                        "{% if item['type'] == 'text' %}"
-                            "{{ item['text'] }}"
-                        "{% elif item['type'] == 'image' %}"
-                            "{{ '[image_start][image_end]' }}"
-                        "{% elif item['type'] == 'audio' %}"
-                            "{{ '[audio_start][audio_end]' }}"
-                        "{% elif item['type'] == 'video' %}"
-                            "{{ '[video_start][video_end]' }}"
-                        "{% endif %}"
-                    "{% endfor %}"
-                "{% endif %}"
-            "{% endif %}"
-
-            "{% if message['tools'] is defined and message['tools'] %}"
-                "{{ message['tools'] }}"
-            "{% endif %}"
-            
-            "{% if message['tool_calls'] is defined and message['tool_calls'] %}"
-                "{% for tool_call in message['tool_calls'] %}"
-                    "{{ '[tool_start][tool_name]' + tool_call.function.name + '[tool_args]' + tool_call.function.arguments + '[tool_end]' }}"
-                "{% endfor %}"
-            "{% endif %}"
-            
-            "{{ '[im_end]' }}"
-        "{% endif %}"
-    "{% endfor %}"
-    
-    "{% if add_generation_prompt %}"
-        "{{ '[im_start][model]' }}"
-        "{% if enable_thinking is defined and enable_thinking %}"
-            "{{ '[cot_start]' }}"
-        "{% elif enable_thinking is defined and not enable_thinking %}"
-            "{{ '[cot_start][cot_end]' }}"
-        "{% endif %}"
-    "{% endif %}"
-)
-
-
 def create_tokenizer_trainer(
     unk_token: str='[unk]',
     vocab_size: int=32000,
-    special_tokens: list[str]=base_special_tokens
+    special_tokens: list[str]=[]
 ) -> TokenizerTrainerResult:
     '''
     Creates a BPE Tokenizer trainer.
@@ -186,25 +83,32 @@ def create_tokenizer_trainer(
 
 
 class PackedTokenizer(RemoteResourceMixin):
-    def __init__(self, tokenizer: Optional[Union[Tokenizer, str]] = None):
+    def __init__(
+        self, 
+        tokenizer: Optional[Union[Tokenizer, str]] = None,
+        safe_escape: str = '[unused_42]',
+        safe_rules: Optional[Dict[str, str]] = None
+    ):
         self._tokenizer: Optional[Tokenizer] = None
         self._fast_tokenizer: Optional[PreTrainedTokenizerFast] = None
         self.config = {}
-        self.template = chat_template
+        self.template = ''
+        
+        self.extra_files: Dict[str, bytes] = {}
 
-        self.safe_escape = '[unused_42]'
+        self.safe_escape = safe_escape
         self.safe_escape_id: int = None
+        
+        self.safe_rules: Dict[str, str] = safe_rules or {
+            ']': '{safe}]',
+            '[': '[{safe}',
+            '|': '{safe}|{safe}'
+        }
 
         if isinstance(tokenizer, str):
             self.load(tokenizer)
         elif isinstance(tokenizer, Tokenizer):
             self._tokenizer = tokenizer
-            self.config = {
-                'unk_token': '[unk]',
-                'pad_token': '[pad]',
-                'bos_token': '[im_start]',
-                'eos_token': '[im_end]',
-            }
             self._update_fast_tokenizer()
 
     def _update_fast_tokenizer(self) -> None:
@@ -217,10 +121,10 @@ class PackedTokenizer(RemoteResourceMixin):
 
         self._fast_tokenizer = PreTrainedTokenizerFast(
             tokenizer_object=self._tokenizer,
-            unk_token=self.config.get('unk_token', '[unk]'),
-            pad_token=self.config.get('pad_token', '[pad]'),
-            bos_token=self.config.get('bos_token', '[im_start]'),
-            eos_token=self.config.get('eos_token', '[im_end]'),
+            unk_token=self.config.get('unk_token'),
+            pad_token=self.config.get('pad_token'),
+            bos_token=self.config.get('bos_token'),
+            eos_token=self.config.get('eos_token'),
             chat_template=self.template,
             clean_up_tokenization_spaces=False
         )
@@ -229,11 +133,6 @@ class PackedTokenizer(RemoteResourceMixin):
         if not isinstance(template, str):
             raise TypeError(f'template must be str, got {type(template).__name__}')
         self.template = template
-        self._update_fast_tokenizer()
-        return self
-
-    def reset_chat_template(self) -> 'PackedTokenizer':
-        self.template = chat_template
         self._update_fast_tokenizer()
         return self
 
@@ -259,15 +158,21 @@ class PackedTokenizer(RemoteResourceMixin):
                 raise ValueError(f'Escape token {self.safe_escape} not found in vocab.')
             self.safe_escape_id = tid
         return self.safe_escape_id
+
+    def _apply_safe_rules(self, text: str) -> str:
+        for old, new in self.safe_rules.items():
+            text = text.replace(old, new.format(safe=self.safe_escape))
+        return text
     
     def _sanitize_content(self, content: Any) -> Any:
         if isinstance(content, str):
-            return content.replace(']', f'{self.safe_escape}]')
+            return self._apply_safe_rules(content)
         elif isinstance(content, list):
             return [
                 {**item, 'text': self._sanitize_content(item['text'])} if item.get('type') == 'text' else item 
                 for item in content
             ]
+        return content
         
     def apply_chat_template(
         self, 
@@ -301,7 +206,7 @@ class PackedTokenizer(RemoteResourceMixin):
     def encode(self, text: str, add_special_tokens: bool = False, **kwargs) -> List[int]:
         escape_id = self.ensure_escape()
 
-        safe_text = text.replace(']', f'{self.safe_escape}]')
+        safe_text = self._apply_safe_rules(text)
         
         raw_ids = self.fast_tokenizer.encode(safe_text, add_special_tokens=add_special_tokens, **kwargs)
         
@@ -310,11 +215,28 @@ class PackedTokenizer(RemoteResourceMixin):
     def decode(self, token_ids: List[int], skip_special_tokens: bool = False) -> str:
         return self.fast_tokenizer.decode(token_ids, skip_special_tokens=skip_special_tokens)
     
+    def add_file(self, name: str, data: Union[str, bytes]) -> 'PackedTokenizer':
+        if isinstance(data, str):
+            data = data.encode('utf-8')
+        self.extra_files[name] = data
+        return self
+
+    def get_file(self, name: str) -> Optional[bytes]:
+        return self.extra_files.get(name)
+
     def save(self, path: str) -> 'PackedTokenizer':
         if self._tokenizer is None:
             raise ValueError('No tokenizer to save.')
 
-        with zipfile.ZipFile(path, 'w') as z:
+        reserved_files = {
+            'tokenizer.json', 
+            'tokenizer_config.json', 
+            'chat_template.jinja', 
+            'safe_rules.json', 
+            'safe_escape.txt'
+        }
+
+        with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:
             # Save tokenizer.json
             z.writestr('tokenizer.json', self._tokenizer.to_str())
             
@@ -324,11 +246,29 @@ class PackedTokenizer(RemoteResourceMixin):
             # Save chat_template.jinja
             z.writestr('chat_template.jinja', self.template)
             
+            # Save safe rules and escape token
+            z.writestr('safe_rules.json', json.dumps(self.safe_rules, indent=2))
+            z.writestr('safe_escape.txt', self.safe_escape)
+
+            # Save extra arbitrary files
+            for name, data in self.extra_files.items():
+                if name in reserved_files:
+                    raise ValueError(f'Cannot use reserved file name for extra files: {name}')
+                z.writestr(name, data)
+            
         return self
     
     def load(self, path: str) -> 'PackedTokenizer':
         if not os.path.exists(path):
-            raise FileNotFoundError(f"File not found: {path}")
+            raise FileNotFoundError(f'File not found: {path}')
+
+        reserved_files = {
+            'tokenizer.json', 
+            'tokenizer_config.json', 
+            'chat_template.jinja', 
+            'safe_rules.json', 
+            'safe_escape.txt'
+        }
 
         with zipfile.ZipFile(path, 'r') as z:
             file_list = z.namelist()
@@ -358,6 +298,25 @@ class PackedTokenizer(RemoteResourceMixin):
             template_file = find_file('chat_template.jinja')
             if template_file:
                 self.template = z.read(template_file).decode('utf-8')
+
+            # Load safe_rules.json
+            rules_file = find_file('safe_rules.json')
+            if rules_file:
+                rules_json = z.read(rules_file).decode('utf-8')
+                self.safe_rules = json.loads(rules_json)
+
+            # Load safe_escape.txt
+            escape_file = find_file('safe_escape.txt')
+            if escape_file:
+                self.safe_escape = z.read(escape_file).decode('utf-8')
+                self.safe_escape_id = None  # Reset cache
+
+            # Load extra arbitrary files
+            self.extra_files = {}
+            for f in file_list:
+                base_name = f.split('/')[-1]
+                if base_name and base_name not in reserved_files:
+                    self.extra_files[f] = z.read(f)
 
         self._update_fast_tokenizer()
         return self

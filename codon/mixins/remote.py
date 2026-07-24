@@ -1,6 +1,6 @@
 from typing import Literal, Optional, Dict, Any, TypeVar, Union
 from codon.builtin.repo import Repo
-from codon.mixin.base   import CodonMixin
+from codon.mixins.base  import CodonMixin
 
 
 TRemoteResource = TypeVar('TRemoteResource', bound='RemoteResourceMixin')
