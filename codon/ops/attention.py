@@ -81,8 +81,7 @@ def apply_attention(
         is_causal = False
         
     if not output_attentions:
-        if attention_mask is None and is_causal is None: 
-            is_causal = True
+        if attention_mask is None and is_causal is None: is_causal = True
         
         try:
             output = F.scaled_dot_product_attention(

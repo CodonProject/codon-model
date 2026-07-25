@@ -4,8 +4,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-# 1. 基础辅助功能 (Helpers)
-
 def _is_exporting() -> bool:
     return torch.jit.is_tracing() or torch.onnx.is_in_onnx_export()
 
@@ -18,10 +16,7 @@ def _reshape_parameter(param: torch.Tensor, ndim: int, channel_first: bool) -> t
 
 HAS_NATIVE_RMSNORM = hasattr(nn, 'RMSNorm')
 
-# 2. 自定义 Autograd 算子 (极度节省训练显存)
-
 class _RMSNormFunc(torch.autograd.Function):
-    """通用 RMSNorm / ZCRMSNorm 自定义算子"""
     @staticmethod
     def forward(ctx, x, gamma, eps, dim, zero_centered: bool):
         orig_dtype = x.dtype
@@ -77,7 +72,6 @@ class _RMSNormFunc(torch.autograd.Function):
 
 
 class _L1RMSNormFunc(torch.autograd.Function):
-    """L1-Norm 版本的自定义算子"""
     @staticmethod
     def forward(ctx, x, gamma, eps, dim):
         orig_dtype = x.dtype
@@ -125,8 +119,6 @@ class _L1RMSNormFunc(torch.autograd.Function):
         
         return dx.to(orig_dtype), d_gamma.to(gamma.dtype), None, None
 
-
-# 3. 经典归一化 (RMSNorm & LayerNorm)
 
 class RMSNorm(BasicModel):
     """
@@ -230,8 +222,6 @@ class ZCLayerNorm(BasicModel):
         
         return (x_normed.to(orig_dtype) * (1.0 + weight.to(orig_dtype)) + bias.to(orig_dtype))
 
-
-# 4. 端侧及低开销优化归一化 (ScaleNorm, L1Norm, FRN, EvoNorm)
 
 class ScaleNorm(BasicModel):
     """极简缩放归一化 (仅单标量参数进行L2归一化)"""
@@ -344,7 +334,6 @@ class EvoNormS0(BasicModel):
         return x_normed * self.gamma + self.beta
 
 
-# 5. 跨维度自适应与融合归一化 (FlexibleGroupNorm & InstanceNorm)
 
 class FlexibleGroupNorm(BasicModel):
     """
@@ -419,7 +408,6 @@ class FusedInstanceNorm2d(BasicModel):
         )
 
 
-# 6. 权重级别正则化 (SpectralNorm & WSConv2d)
 
 class ExportableSpectralNorm(BasicModel):
     """

@@ -22,14 +22,14 @@ class MultiHeadAttention(BasicModel):
     '''
     def __init__(
         self,
-        hidden_size,
-        num_heads,
-        num_kv_heads=None,
-        use_qk_norm=True,
-        use_gate=False,
-        dropout=0.1,
-        bias: bool=True,
-        is_causal=True
+        hidden_size: int,
+        num_heads: int,
+        num_kv_heads: Optional[bool]=None,
+        use_qk_norm: Optional[bool]=True,
+        use_gate: Optional[bool]=False,
+        dropout: Optional[float]=0.1,
+        bias: Optional[bool]=True,
+        is_causal: Optional[bool]=True
     ):
         '''
         Initialize the Multi-Head Attention module.
@@ -156,8 +156,8 @@ class MultiHeadAttention(BasicModel):
             V = V.reshape(batch_size, self.num_heads, kv_seq_len_total, self.head_dim)
             
         attn_output = apply_attention(
-            Q, K, V, 
-            attention_mask=attention_mask, 
+            Q, K, V,
+            attention_mask=attention_mask,
             output_attentions=output_attentions,
             is_causal=self.is_causal,
             dropout=self.dropout if self.training else 0.0
@@ -175,6 +175,8 @@ class MultiHeadAttention(BasicModel):
             attention_weights=attention_weights,
             past_key_value=current_key_value
         )
+
+
 
 
 class MultiHeadAttentionKEV(BasicModel):
