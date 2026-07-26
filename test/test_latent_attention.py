@@ -8,7 +8,7 @@ import torch
 import unittest
 import gc
 
-from codon.exp.block.attn_latent import MultiHeadAttention
+from codon.block.attention import MultiHeadAttention
 from codon.block.embedding import RotaryEmbedding
 
 

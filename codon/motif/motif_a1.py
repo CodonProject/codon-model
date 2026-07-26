@@ -2,9 +2,8 @@ from codon import *
 from codon.block.transformer import TransformerDenseDecoder
 from codon.block.embedding   import RotaryEmbedding
 from codon.utils.tokens      import PackedTokenizer
-from codon.utils.onnx        import patch_rms_norm
-
-from .base import CausalLanguageModel, CausalLanguageModelOutput
+from codon.model.cache       import ModelCache, build_cache
+from codon.model.types.language import CausalLanguageModel, CausalLanguageModelOutput
 
 
 class MotifA1Tokenizer(PackedTokenizer):
@@ -80,19 +79,21 @@ class MotifA1(CausalLanguageModel):
         input_ids: torch.Tensor,
         mask: torch.Tensor = None,
         start_pos: Union[int, torch.Tensor] = 0,
-        past_key_values: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None,
-        use_cache: bool = False,
+        past_key_values: Optional[ModelCache] = None,
         output_attentions: bool = False
     ) -> CausalLanguageModelOutput:
         x = self.token_emb(input_ids)
         x = self.dropout(x)
 
-        new_kv_cache = [] if use_cache else None
         all_attentions = [] if output_attentions else None
         aux_loss = None
 
         for i, layer in enumerate(self.decoder):
-            layer_past = past_key_values[i] if past_key_values is not None else None
+            layer_past = None
+            if isinstance(past_key_values, ModelCache):
+                if past_key_values[i] is None:
+                    past_key_values[i] = build_cache(layer.attn)
+                layer_past = past_key_values[i]
             
             out = layer(
                 hidden_states=x,
@@ -101,13 +102,9 @@ class MotifA1(CausalLanguageModel):
                 position_emb=self.position_emb,
                 embedding_start=start_pos,
                 past_key_value=layer_past,
-                use_cache=use_cache
             )
             
             x = out.output
-            
-            if use_cache:
-                new_kv_cache.append(out.past_key_value)
             
             if output_attentions:
                 all_attentions.append(out.attention_weights)
@@ -123,7 +120,7 @@ class MotifA1(CausalLanguageModel):
 
         return CausalLanguageModelOutput(
             logits=logits,
-            past_key_values=new_kv_cache,
+            past_key_values=past_key_values,
             aux_loss=aux_loss,
             attentions=all_attentions
         )

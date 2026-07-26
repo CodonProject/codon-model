@@ -4,8 +4,9 @@ import torch
 
 from codon.utils.tokens  import PackedTokenizer
 from codon.utils.session import Session
-from codon.motif.base import CausalLanguageModel
-from codon.motif.base import Sampler, KVCache
+from codon.model.types.language import CausalLanguageModel
+from codon.model.sampler import Sampler
+from codon.model.cache import ModelCache
 
 
 @dataclass
@@ -62,7 +63,9 @@ def chat(
     input_ids = tensors['input_ids']
 
     sampler = Sampler(temperature=temperature, top_k=top_k, top_p=top_p)
-    kv_cache = KVCache()
+    
+    kv_cache = ModelCache()
+    kv_cache.to(device)
 
     generated = input_ids.clone()
 
@@ -79,8 +82,7 @@ def chat(
         outputs = model.forward(
             input_ids=input_ids,
             start_pos=0,
-            past_key_values=None,
-            use_cache=True
+            past_key_values=kv_cache,
         )
         
         logits = outputs.logits[:, -1, :]
@@ -89,7 +91,7 @@ def chat(
         generated = torch.cat([generated, next_token], dim=-1)
         
         if outputs.past_key_values is not None:
-            kv_cache.update(outputs.past_key_values)
+            kv_cache = outputs.past_key_values
 
         # Decode
         for _ in range(max_new_tokens - 1):
@@ -114,13 +116,18 @@ def chat(
                 
             if cot_ended: cot_ended = False
 
+            current_pos = 0
+            if len(kv_cache.layer_caches) > 0:
+                first_cache = next(iter(kv_cache.layer_caches.values()))
+                current_pos = first_cache.seq_length
+
             outputs = model.forward(
                 input_ids=next_token,
-                start_pos=kv_cache.current_len,
-                past_key_values=kv_cache.states,
-                use_cache=True
+                start_pos=current_pos,
+                past_key_values=kv_cache,
             )
-            kv_cache.update(outputs.past_key_values)
+            if outputs.past_key_values is not None:
+                kv_cache = outputs.past_key_values
             
             next_token = sampler(outputs.logits[:, -1, :], input_ids=generated)
             generated = torch.cat([generated, next_token], dim=-1)

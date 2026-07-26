@@ -10,7 +10,7 @@ from codon.mixins._types import TModule
 
 
 class SerializationMixin:
-    def load_pretrained(self: TModule, path: str, strict: bool = False) -> TModule:
+    def load(self: TModule, path: str, strict: bool = False) -> TModule:
         if path.endswith('.safetensors'):
             safe_load_model(self, path, strict=strict)
             return self
@@ -25,7 +25,7 @@ class SerializationMixin:
         self.load_state_dict(clean_state_dict, strict=strict)
         return self
     
-    def save_pretrained(self: TModule, path: str, trainable_only: bool = False, include_buffer: bool = True, 
+    def save(self: TModule, path: str, trainable_only: bool = False, include_buffer: bool = True, 
                         exclude_modules: list[Union[type, nn.Module]] = None, only: list[str] = None, exclude: list[str] = None) -> TModule:
         state_dict = self.state_dict()
         is_modified = False

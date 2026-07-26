@@ -1,6 +1,4 @@
 from .base import (
-    CausalLanguageModel,
-    CausalLanguageModelOutput,
     AutoencoderVisionModel,
     AutoVisionEncoderOutput,
     AutoVisionDecoderOutput,

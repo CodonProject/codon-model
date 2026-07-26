@@ -9,6 +9,7 @@ from codon.block.moe       import MoE, MoEOutput
 from codon.block.norm      import(
     RMSNorm
 )
+from codon.model.cache import BasicLayerCache
 
 
 @dataclass
@@ -44,7 +45,7 @@ class TransformerDecoderOutput:
     attention_weights: Optional[torch.Tensor] = None
     attention_mask: Optional[torch.Tensor] = None
     aux_loss: Optional[torch.Tensor] = None
-    past_key_value: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
+    past_key_value: Optional[BasicLayerCache] = None
     use_emb: Optional[BasicEmbedding] = None
     emb_start: Optional[int] = 0
     emb_pos: Optional[torch.Tensor] = None
@@ -137,8 +138,7 @@ class _TransformerDecoder(BasicModel):
         position_emb: BasicEmbedding = None,
         embedding_start: Union[int, torch.Tensor] = 0,
         embedding_pos: torch.Tensor = None,
-        past_key_value: tuple[torch.Tensor, torch.Tensor] = None,
-        use_cache: bool = False
+        past_key_value: Optional[BasicLayerCache] = None,
     ) -> TransformerDecoderOutput:
         '''
         Forward pass of the Transformer Decoder layer.
@@ -166,7 +166,6 @@ class _TransformerDecoder(BasicModel):
             embedding_start=embedding_start,
             embedding_pos=embedding_pos,
             past_key_value=past_key_value,
-            use_cache=use_cache
         )
         hidden_states = hidden_states + self.dropout(attention_output.output)
 
@@ -189,7 +188,7 @@ class _TransformerDecoder(BasicModel):
     def forward_dc(
         self, 
         data: TransformerDecoderOutput, 
-        current_layer_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
+        current_layer_kv: Optional[BasicLayerCache] = None
     ) -> TransformerDecoderOutput:
         '''
         Forward pass utilizing a TransformerDecoderOutput object for chained execution.
@@ -201,7 +200,6 @@ class _TransformerDecoder(BasicModel):
         Returns:
             TransformerDecoderOutput: Output object for the next layer.
         '''
-        use_cache = current_layer_kv is not None
         need_attn_weight = data.attention_weights is not None
         return self.forward(
             hidden_states=data.output,
@@ -211,7 +209,6 @@ class _TransformerDecoder(BasicModel):
             embedding_start=data.emb_start,
             embedding_pos=data.emb_pos,
             past_key_value=current_layer_kv,
-            use_cache=use_cache
         )
 
     def flow(self, x: torch.Tensor) -> FlowOutput:

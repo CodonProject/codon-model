@@ -9,7 +9,7 @@ import torch.optim as optim
 from PIL import Image
 
 from codon.motif.motif_v1 import MotifV1
-from codon.model.patch_disc import PatchDiscriminator
+from codon.block.model.patch_disc import PatchDiscriminator
 from codon.kit.train.vision import auto_vision_train
 
 

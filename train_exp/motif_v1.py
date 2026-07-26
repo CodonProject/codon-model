@@ -8,7 +8,7 @@ seed_everything(42)
 
 from codon.motif.motif_v1 import MotifV1
 from codon.utils.data import ImageDataset, ImageDatasetItem
-from codon.model.patch_disc import PatchDiscriminator
+from codon.block.model.patch_disc import PatchDiscriminator
 from codon.utils.transforms import _vision_transform
 
 from codon.kit.train.vision import auto_vision_train

@@ -6,7 +6,7 @@ from PIL import Image
 from dataclasses import dataclass
 from typing import Union, Optional, Literal, Callable
 
-from codon.model import PatchDiscriminator
+from codon.block.model import PatchDiscriminator
 from codon.motif import (
     AutoencoderVisionModel,
     AutoVisionEncoderOutput,
