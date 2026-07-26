@@ -109,7 +109,7 @@
 {%- set first_msg = messages[0] if messages else none -%}
 {%- set first_system = first_msg if (first_msg and first_msg.role in ['system', 'developer']) else none -%}
 {%- if first_system or tools -%}
-    {{- '<|im_start:system|>' -}}
+    {{- '<|im_start|><|system|>' -}}
     {%- if first_system -%}
         {{- render_content(first_system.content, is_system=true) | trim -}}
         {%- if tools -%}
@@ -133,15 +133,15 @@
     {%- if first_system is not none and message == first_system -%}
         {#- Skip first system -#}
     {%- elif message.role in ['system', 'developer'] -%}
-        {{- '<|im_start:system|>' -}}
+        {{- '<|im_start|><|system|>' -}}
         {{- render_content(message.content, is_system=true) | trim -}}
         {{- '<|im_end|>' -}}
     {%- elif message.role == 'user' -%}
-        {{- '<|im_start:user|>' -}}
+        {{- '<|im_start|><|user|>' -}}
         {{- render_content(message.content) | trim -}}
         {{- '<|im_end|>' -}}
     {%- elif message.role in ['assistant', 'model'] -%}
-        {{- '<|im_start:model|>' -}}
+        {{- '<|im_start|><|model|>' -}}
         {%- set thought_content = message.thought | default(message.reasoning_content) | default('') -%}
         {%- set content = message.content -%}
         {%- if not thought_content | trim and content is string and '</think>' in content and (content | trim).startswith('<think>') and split_think -%}
@@ -159,7 +159,7 @@
         {%- endif -%}
         {{- '<|im_end|>' -}}
     {%- elif message.role in ['tool', 'tool_response'] -%}
-        {{- '<|im_start:tool_response|>' -}}
+        {{- '<|im_start|><|tool_response|>' -}}
         {%- if message.name is defined -%}
             {{- message.name -}}{{- '<|tool_name_divider|>' -}}
         {%- endif -%}
@@ -174,7 +174,7 @@
 {%- endfor -%}
 
 {%- if add_generation_prompt -%}
-    {{- '<|im_start:model|>' -}}
+    {{- '<|im_start|><|model|>' -}}
     {%- if enable_thinking | default(true) -%}
         {{- '<|thought_start|>' -}}
     {%- else -%}
