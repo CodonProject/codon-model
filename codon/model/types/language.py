@@ -54,7 +54,7 @@ class CausalLanguageModel(BasicModel):
 
         generated = input_ids.clone()
         
-        if past_key_values is None: past_key_values = ModelCache()
+        if past_key_values is None: past_key_values = ModelCache().to(self.device)
 
         with torch.no_grad():
             # 1. Prefill 
@@ -73,10 +73,7 @@ class CausalLanguageModel(BasicModel):
                 if eos_token_id is not None and (next_token == eos_token_id).all():
                     break
 
-                current_pos = 0
-                if len(past_key_values.layer_caches) > 0:
-                    first_cache = next(iter(past_key_values.layer_caches.values()))
-                    current_pos = first_cache.seq_length
+                current_pos = past_key_values.seq_length
 
                 outputs = self.forward(
                     input_ids=next_token,

@@ -1,3 +1,6 @@
+'''
+From Huawei 'Caracal: Causal Architecture via Spectral Mixing' [arXiv:2605.00292 cs.LG]
+'''
 from codon import *
 from codon.ops import AttentionOutput, apply_fourier_mixing
 from codon.model.cache import BasicLayerCache

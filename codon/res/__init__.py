@@ -20,6 +20,7 @@ LM = {
         # FIM token
         '<|fim_prefix|>', '<|fim_suffix|>', '<|fim_middle|>',
         # Tokenizer safe escape
-        '<|safe_escape|>'
+        '<|safe_escape|>',
+        '<|pad|>', '<|unk|>', '<|sep|>'
     ]
 }

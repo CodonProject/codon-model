@@ -40,7 +40,9 @@ class TokenizerTrainerResult:
 def create_tokenizer_trainer(
     unk_token: str='[unk]',
     vocab_size: int=32000,
-    special_tokens: list[str]=[]
+    special_tokens: list[str]=[],
+    use_norm: bool = True,
+    use_nfc: bool = True
 ) -> TokenizerTrainerResult:
     '''
     Creates a BPE Tokenizer trainer.
@@ -59,7 +61,8 @@ def create_tokenizer_trainer(
     '''
     tokenizer = Tokenizer(BPE(unk_token=unk_token))
 
-    tokenizer.normalizer = normalizers.NFKC()
+    if use_norm:
+        tokenizer.normalizer = normalizers.NFC() if use_nfc else normalizers.NFKC()
 
     tokenizer.pre_tokenizer = pre_tokenizers.Sequence([
         pre_tokenizers.Digits(individual_digits=True),

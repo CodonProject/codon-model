@@ -153,10 +153,16 @@ class LinearAttentionLayerCache(BasicLayerCache):
 
 
 class ModelCache:
-    '''管理整个模型所有层的 Cache 容器'''
     def __init__(self):
         self.layer_caches: Dict[int, BasicLayerCache] = {}
         self.device: Optional[torch.device] = None
+    
+    @property
+    def seq_length(self) -> int:
+        if len(self.layer_caches) > 0:
+            first_cache = next(iter(self.layer_caches.values()))
+            return first_cache.seq_length
+        return 0
 
     def __len__(self) -> int:
         return len(self.layer_caches)
@@ -165,7 +171,6 @@ class ModelCache:
         return self.layer_caches.get(layer_idx, None)
     
     def __setitem__(self, layer_idx: int, cache: BasicLayerCache):
-        # 仅当 ModelCache 本身已绑定设备时，才移动新入栈的层缓存设备
         if self.device is not None:
             cache.to(self.device)
         self.layer_caches[layer_idx] = cache
@@ -190,6 +195,9 @@ def build_cache(layer: object) -> BasicLayerCache:
         - MultiHeadAttention (Standard GQA/MHA): KVLayerCache
         - MultiHeadAttentionKEV: TensorLayerCache(concat_dim=2)
     '''
+    if hasattr(layer, 'module'):
+        layer = layer.module
+
     class_name = layer.__class__.__name__
     
     if not string_has(class_name, ['Attention', 'Fourier']):
