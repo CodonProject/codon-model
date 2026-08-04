@@ -22,7 +22,24 @@ from .complex import (
     complex_sigmoid,
     mod_relu,
     mod_silu,
-    mod_sigmoid
+    mod_sigmoid,
+)
+from .cv import (
+    apply_canny,
+    apply_elsd,
+    apply_hog,
+    apply_hough,
+    apply_lsd,
+    apply_sift,
+    apply_slic,
+)
+from .clustering import (
+    apply_dbscan,
+    apply_kmeans,
+    apply_peak_clustering,
+    compute_dbscan,
+    compute_kmeans,
+    compute_peak_clustering,
 )
 
 __all__ = [
@@ -49,12 +66,27 @@ __all__ = [
     'riemannian_manifold_linear',
     'riemannian_manifold_conv2d',
     # fourier
-    'apply_fourier_mixing'
+    'apply_fourier_mixing',
     # complex
     'complex_relu',
     'complex_silu',
     'complex_sigmoid',
     'mod_relu',
     'mod_silu',
-    'mod_sigmoid'
+    'mod_sigmoid',
+    # cv
+    'apply_canny',
+    'apply_elsd',
+    'apply_hog',
+    'apply_hough',
+    'apply_lsd',
+    'apply_sift',
+    'apply_slic',
+    # clustering
+    'apply_dbscan',
+    'apply_kmeans',
+    'apply_peak_clustering',
+    'compute_dbscan',
+    'compute_kmeans',
+    'compute_peak_clustering',
 ]
