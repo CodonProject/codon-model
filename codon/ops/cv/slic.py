@@ -1,10 +1,16 @@
-import torch
-import torch.nn.functional as F
-import numpy as np
-import numba
-from numba import jit
+from codon import *
 
-def _rgb_to_lab_pytorch(img_tensor):
+
+def _rgb_to_lab_pytorch(img_tensor: torch.Tensor) -> torch.Tensor:
+    '''
+    Convert an RGB or sRGB image tensor to CIELAB color space using PyTorch.
+
+    Args:
+        img_tensor (torch.Tensor): Image tensor of shape (3, H, W) or (1, 3, H, W).
+
+    Returns:
+        torch.Tensor: CIELAB image tensor of shape (3, H, W).
+    '''
     if img_tensor.max() > 1.0:
         img_tensor = img_tensor / 255.0
 
@@ -38,7 +44,20 @@ def _rgb_to_lab_pytorch(img_tensor):
     lab = torch.cat([L, a, b], dim=-1).squeeze(0).permute(2, 0, 1)
     return lab
 
-def preprocess_slic_pytorch(img_tensor, device='cpu'):
+def preprocess_slic_pytorch(
+    img_tensor: torch.Tensor,
+    device: str = 'cpu'
+) -> Tuple[np.ndarray, np.ndarray]:
+    '''
+    Preprocess image tensor by converting to LAB and calculating gradient.
+
+    Args:
+        img_tensor (torch.Tensor): Input image tensor of shape (H, W), (1, H, W) or (3, H, W).
+        device (str): Device to perform computations.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]: LAB image array and gradient map.
+    '''
     if img_tensor.dim() == 2:
         img_tensor = img_tensor.unsqueeze(0).repeat(3, 1, 1)
     elif img_tensor.dim() == 3 and img_tensor.shape[0] == 1:
@@ -58,8 +77,19 @@ def preprocess_slic_pytorch(img_tensor, device='cpu'):
 
     return lab_tensor.permute(1, 2, 0).cpu().numpy(), grad.cpu().numpy()
 
-@jit(nopython=True, fastmath=True)
-def _init_centers(lab_img, grad, n_segments):
+@numba.jit(nopython=True, fastmath=True)
+def _init_centers(lab_img: np.ndarray, grad: np.ndarray, n_segments: int) -> Tuple[np.ndarray, int]:
+    '''
+    Initialize superpixel cluster centers at locations of minimum gradient.
+
+    Args:
+        lab_img (np.ndarray): LAB image array of shape (H, W, 3).
+        grad (np.ndarray): Image gradient magnitude map of shape (H, W).
+        n_segments (int): Approximate number of target superpixels.
+
+    Returns:
+        Tuple[np.ndarray, int]: Array of cluster centers and grid step size S.
+    '''
     H, W, _ = lab_img.shape
     S = int(np.sqrt((H * W) / n_segments))
 
@@ -81,8 +111,27 @@ def _init_centers(lab_img, grad, n_segments):
 
     return np.array(centers, dtype=np.float32), S
 
-@jit(nopython=True, fastmath=True)
-def _slic_cluster(lab_img, centers, S, compactness=10.0, max_iter=10):
+@numba.jit(nopython=True, fastmath=True)
+def _slic_cluster(
+    lab_img: np.ndarray,
+    centers: np.ndarray,
+    S: int,
+    compactness: float = 10.0,
+    max_iter: int = 10
+) -> np.ndarray:
+    '''
+    Perform SLIC clustering using local k-means optimization.
+
+    Args:
+        lab_img (np.ndarray): LAB image array of shape (H, W, 3).
+        centers (np.ndarray): Initial cluster centers.
+        S (int): Grid step size.
+        compactness (float): Parameter balancing color similarity and spatial proximity.
+        max_iter (int): Maximum number of iterations.
+
+    Returns:
+        np.ndarray: Label map of shape (H, W).
+    '''
     H, W, _ = lab_img.shape
     K = len(centers)
     labels = -np.ones((H, W), dtype=numba.int32)
@@ -139,8 +188,18 @@ def _slic_cluster(lab_img, centers, S, compactness=10.0, max_iter=10):
 
     return labels
 
-@jit(nopython=True, fastmath=True)
-def _enforce_connectivity(labels, min_element_size):
+@numba.jit(nopython=True, fastmath=True)
+def _enforce_connectivity(labels: np.ndarray, min_element_size: int) -> np.ndarray:
+    '''
+    Enforce spatial connectivity of superpixel labels to remove small orphan segments.
+
+    Args:
+        labels (np.ndarray): Label map from clustering.
+        min_element_size (int): Minimum pixel count for a superpixel.
+
+    Returns:
+        np.ndarray: Connected label map of shape (H, W).
+    '''
     H, W = labels.shape
     new_labels = -np.ones((H, W), dtype=numba.int32)
     
@@ -180,7 +239,28 @@ def _enforce_connectivity(labels, min_element_size):
 
         return new_labels
 
-def apply_slic(image, n_segments=100, compactness=10.0, max_iter=10, enforce_connectivity=True, device='cpu'):
+def apply_slic(
+    image: Union[np.ndarray, torch.Tensor],
+    n_segments: int = 100,
+    compactness: float = 10.0,
+    max_iter: int = 10,
+    enforce_connectivity: bool = True,
+    device: str = 'cpu'
+) -> np.ndarray:
+    '''
+    Apply Simple Linear Iterative Clustering (SLIC) to an image.
+
+    Args:
+        image (Union[np.ndarray, torch.Tensor]): Input image array or tensor.
+        n_segments (int): Number of target superpixels.
+        compactness (float): Compactness parameter for superpixels.
+        max_iter (int): Maximum number of iterations.
+        enforce_connectivity (bool): Whether to enforce connected segments.
+        device (str): Device to use for PyTorch operations.
+
+    Returns:
+        np.ndarray: Label map of shape (H, W).
+    '''
     if isinstance(image, np.ndarray):
         if image.ndim == 3 and image.shape[2] == 3:
             image = image.transpose(2, 0, 1)
@@ -202,7 +282,16 @@ def apply_slic(image, n_segments=100, compactness=10.0, max_iter=10, enforce_con
 
     return labels
 
-def find_boundaries(labels):
+def find_boundaries(labels: np.ndarray) -> np.ndarray:
+    '''
+    Find boundaries between different superpixel label regions.
+
+    Args:
+        labels (np.ndarray): Superpixel label map of shape (H, W).
+
+    Returns:
+        np.ndarray: Boolean boundary map of shape (H, W).
+    '''
     H, W = labels.shape
     boundaries = np.zeros((H, W), dtype=bool)
 

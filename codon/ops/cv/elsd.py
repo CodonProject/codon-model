@@ -1,16 +1,39 @@
-import torch
-import torch.nn.functional as F
-import numpy as np
-import numba
-from numba import jit
+from codon import *
 
-def _gaussian_kernel(kernel_size=5, sigma=0.8):
+
+def _gaussian_kernel(kernel_size: int = 5, sigma: float = 0.8) -> torch.Tensor:
+    '''
+    Generate a 2D Gaussian kernel.
+
+    Args:
+        kernel_size (int): Size of the Gaussian kernel.
+        sigma (float): Standard deviation of the Gaussian distribution.
+
+    Returns:
+        torch.Tensor: Normalized 2D Gaussian kernel of shape (1, 1, kernel_size, kernel_size).
+    '''
     x = torch.arange(kernel_size) - kernel_size // 2
     grid = x.repeat(kernel_size, 1)
     kernel = torch.exp(-(grid**2 + grid.T**2) / (2 * sigma**2))
     return (kernel / kernel.sum()).unsqueeze(0).unsqueeze(0)
 
-def preprocess_image_pytorch(img_tensor, device='cpu'):
+def preprocess_image_pytorch(
+    img_tensor: torch.Tensor,
+    device: str = 'cpu'
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    '''
+    Preprocess input image to compute gradient magnitude, angles, and sorted indices.
+
+    Args:
+        img_tensor (torch.Tensor): Input image tensor of shape (H, W), (C, H, W) or (1, C, H, W).
+        device (str): Device to perform processing on.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray, np.ndarray]:
+            - Gradient magnitude array.
+            - Gradient angle array.
+            - Sorted gradient magnitude indices in descending order.
+    '''
     if img_tensor.dim() == 2:
         img_tensor = img_tensor.unsqueeze(0).unsqueeze(0)
     elif img_tensor.dim() == 3:
@@ -37,8 +60,18 @@ def preprocess_image_pytorch(img_tensor, device='cpu'):
             angles.cpu().numpy(), 
             sorted_indices.cpu().numpy())
 
-@jit(nopython=True, fastmath=True)
-def _angle_diff(a1, a2):
+@numba.jit(nopython=True, fastmath=True)
+def _angle_diff(a1: float, a2: float) -> float:
+    '''
+    Calculate the absolute difference between two angles.
+
+    Args:
+        a1 (float): First angle in radians.
+        a2 (float): Second angle in radians.
+
+    Returns:
+        float: Absolute angle difference in radians.
+    '''
     diff = np.abs(a1 - a2)
     if diff > np.pi:
         diff = 2.0 * np.pi - diff
@@ -46,8 +79,33 @@ def _angle_diff(a1, a2):
         diff = np.pi - diff
     return diff
 
-@jit(nopython=True, fastmath=True)
-def _grow_region(mag, angles, used, seed_x, seed_y, H, W, ang_thresh=0.3926):
+@numba.jit(nopython=True, fastmath=True)
+def _grow_region(
+    mag: np.ndarray,
+    angles: np.ndarray,
+    used: np.ndarray,
+    seed_x: int,
+    seed_y: int,
+    H: int,
+    W: int,
+    ang_thresh: float = 0.3926
+) -> Tuple[np.ndarray, np.ndarray]:
+    '''
+    Grow a region starting from a seed point based on angle similarity.
+
+    Args:
+        mag (np.ndarray): Gradient magnitude array.
+        angles (np.ndarray): Gradient angle array.
+        used (np.ndarray): Boolean mask of visited coordinates.
+        seed_x (int): X coordinate of the seed point.
+        seed_y (int): Y coordinate of the seed point.
+        H (int): Image height.
+        W (int): Image width.
+        ang_thresh (float): Maximum angle difference threshold.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]: X and Y coordinates of the grown region.
+    '''
     region_x = [seed_x]
     region_y = [seed_y]
     
@@ -81,8 +139,18 @@ def _grow_region(mag, angles, used, seed_x, seed_y, H, W, ang_thresh=0.3926):
                         
     return np.array(region_x), np.array(region_y)
 
-@jit(nopython=True, fastmath=True)
-def _fit_rectangle(pts_x, pts_y):
+@numba.jit(nopython=True, fastmath=True)
+def _fit_rectangle(pts_x: np.ndarray, pts_y: np.ndarray) -> np.ndarray:
+    '''
+    Fit a minimum bounding rectangle to a set of points.
+
+    Args:
+        pts_x (np.ndarray): X coordinates of the points.
+        pts_y (np.ndarray): Y coordinates of the points.
+
+    Returns:
+        np.ndarray: Array containing [x1, y1, x2, y2, width].
+    '''
     n = len(pts_x)
     if n < 5:
         return np.zeros(5)
@@ -116,8 +184,27 @@ def _fit_rectangle(pts_x, pts_y):
     
     return np.array([x1, y1, x2, y2, width])
 
-@jit(nopython=True, fastmath=True)
-def lsd_core_numba(mag, angles, sorted_indices, min_length=15.0, grad_thresh=20.0):
+@numba.jit(nopython=True, fastmath=True)
+def lsd_core_numba(
+    mag: np.ndarray,
+    angles: np.ndarray,
+    sorted_indices: np.ndarray,
+    min_length: float = 15.0,
+    grad_thresh: float = 20.0
+) -> List[np.ndarray]:
+    '''
+    Core line segment detection algorithm optimized with Numba.
+
+    Args:
+        mag (np.ndarray): Gradient magnitude array.
+        angles (np.ndarray): Gradient angle array.
+        sorted_indices (np.ndarray): Sorted indices of gradient magnitudes.
+        min_length (float): Minimum length of line segments.
+        grad_thresh (float): Minimum gradient threshold.
+
+    Returns:
+        List[np.ndarray]: List of detected line segments [x1, y1, x2, y2, width].
+    '''
     H, W = mag.shape
     used = np.zeros((H, W), dtype=numba.boolean)
     lines = []
@@ -144,8 +231,18 @@ def lsd_core_numba(mag, angles, sorted_indices, min_length=15.0, grad_thresh=20.
             
     return lines
 
-@jit(nopython=True, fastmath=True)
-def _fit_ellipse_direct(pts_x, pts_y):
+@numba.jit(nopython=True, fastmath=True)
+def _fit_ellipse_direct(pts_x: np.ndarray, pts_y: np.ndarray) -> np.ndarray:
+    '''
+    Directly fit an ellipse to a set of points using algebraic distance minimization.
+
+    Args:
+        pts_x (np.ndarray): X coordinates of points.
+        pts_y (np.ndarray): Y coordinates of points.
+
+    Returns:
+        np.ndarray: Ellipse parameters [cx, cy, axis_a, axis_b, phi].
+    '''
     n = len(pts_x)
     if n < 6:
         return np.zeros(5)
@@ -204,8 +301,27 @@ def _fit_ellipse_direct(pts_x, pts_y):
     
     return np.array([cx, cy, axis_a, axis_b, phi])
 
-@jit(nopython=True, fastmath=True)
-def elsd_core_numba(mag, angles, sorted_indices, min_arc_len=20.0, grad_thresh=20.0):
+@numba.jit(nopython=True, fastmath=True)
+def elsd_core_numba(
+    mag: np.ndarray,
+    angles: np.ndarray,
+    sorted_indices: np.ndarray,
+    min_arc_len: float = 20.0,
+    grad_thresh: float = 20.0
+) -> List[np.ndarray]:
+    '''
+    Core ellipse segment detection algorithm optimized with Numba.
+
+    Args:
+        mag (np.ndarray): Gradient magnitude array.
+        angles (np.ndarray): Gradient angle array.
+        sorted_indices (np.ndarray): Sorted indices of gradient magnitudes.
+        min_arc_len (float): Minimum arc length of the ellipse segments.
+        grad_thresh (float): Minimum gradient threshold.
+
+    Returns:
+        List[np.ndarray]: List of detected ellipse parameters.
+    '''
     H, W = mag.shape
     used = np.zeros((H, W), dtype=numba.boolean)
     ellipses = []
@@ -231,7 +347,24 @@ def elsd_core_numba(mag, angles, sorted_indices, min_arc_len=20.0, grad_thresh=2
                 
     return ellipses
 
-def apply_lsd(image, min_length=15.0, grad_thresh=20.0, device='cpu'):
+def apply_lsd(
+    image: Union[np.ndarray, torch.Tensor],
+    min_length: float = 15.0,
+    grad_thresh: float = 20.0,
+    device: str = 'cpu'
+) -> np.ndarray:
+    '''
+    Apply the Line Segment Detector (LSD) algorithm to an image.
+
+    Args:
+        image (Union[np.ndarray, torch.Tensor]): Input image array or tensor.
+        min_length (float): Minimum line segment length.
+        grad_thresh (float): Minimum gradient threshold.
+        device (str): Device to use for PyTorch operations.
+
+    Returns:
+        np.ndarray: Detected line segments as a NumPy array of shape (N, 5).
+    '''
     if isinstance(image, np.ndarray):
         img_tensor = torch.from_numpy(image)
     else:
@@ -244,7 +377,24 @@ def apply_lsd(image, min_length=15.0, grad_thresh=20.0, device='cpu'):
         return np.empty((0, 5))
     return np.array(lines)
 
-def apply_elsd(image, min_arc_len=20.0, grad_thresh=20.0, device='cpu'):
+def apply_elsd(
+    image: Union[np.ndarray, torch.Tensor],
+    min_arc_len: float = 20.0,
+    grad_thresh: float = 20.0,
+    device: str = 'cpu'
+) -> np.ndarray:
+    '''
+    Apply the Ellipse Line Segment Detector (ELSD) algorithm to an image.
+
+    Args:
+        image (Union[np.ndarray, torch.Tensor]): Input image array or tensor.
+        min_arc_len (float): Minimum arc length for detected ellipse segments.
+        grad_thresh (float): Minimum gradient threshold.
+        device (str): Device to use for PyTorch operations.
+
+    Returns:
+        np.ndarray: Detected ellipse parameters as a NumPy array of shape (N, 5).
+    '''
     if isinstance(image, np.ndarray):
         img_tensor = torch.from_numpy(image)
     else:

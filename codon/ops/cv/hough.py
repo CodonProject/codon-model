@@ -1,9 +1,22 @@
-import torch
-import numpy as np
-import numba
-from numba import jit
+from codon import *
 
-def preprocess_hough_pytorch(img_tensor, edge_threshold=128.0, device='cpu'):
+
+def preprocess_hough_pytorch(
+    img_tensor: torch.Tensor,
+    edge_threshold: float = 128.0,
+    device: str = 'cpu'
+) -> np.ndarray:
+    '''
+    Extract edge coordinate indices from an image tensor.
+
+    Args:
+        img_tensor (torch.Tensor): Input edge image tensor of shape (H, W) or (1, H, W).
+        edge_threshold (float): Threshold to consider a pixel as an edge.
+        device (str): Device to perform computations.
+
+    Returns:
+        np.ndarray: Array of shape (N, 2) containing edge coordinate indices (y, x).
+    '''
     if img_tensor.dim() == 3:
         img_tensor = img_tensor.squeeze()
 
@@ -13,8 +26,31 @@ def preprocess_hough_pytorch(img_tensor, edge_threshold=128.0, device='cpu'):
     
     return edge_indices.cpu().numpy()
 
-@jit(nopython=True, fastmath=True)
-def _hough_accumulate(edge_coords, num_rhos, num_thetas, sin_t, cos_t, max_dist, rho_res):
+@numba.jit(nopython=True, fastmath=True)
+def _hough_accumulate(
+    edge_coords: np.ndarray,
+    num_rhos: int,
+    num_thetas: int,
+    sin_t: np.ndarray,
+    cos_t: np.ndarray,
+    max_dist: float,
+    rho_res: float
+) -> np.ndarray:
+    '''
+    Accumulate votes in the Hough parameter space.
+
+    Args:
+        edge_coords (np.ndarray): Edge coordinates.
+        num_rhos (int): Number of rho bins.
+        num_thetas (int): Number of theta bins.
+        sin_t (np.ndarray): Sine of the theta bins.
+        cos_t (np.ndarray): Cosine of the theta bins.
+        max_dist (float): Maximum possible distance from origin (diagonal of image).
+        rho_res (float): Resolution of the distance parameter.
+
+    Returns:
+        np.ndarray: Accumulator array of shape (num_rhos, num_thetas).
+    '''
     accumulator = np.zeros((num_rhos, num_thetas), dtype=np.int32)
     n_points = edge_coords.shape[0]
 
@@ -32,8 +68,25 @@ def _hough_accumulate(edge_coords, num_rhos, num_thetas, sin_t, cos_t, max_dist,
 
     return accumulator
 
-@jit(nopython=True, fastmath=True)
-def _find_hough_peaks(accumulator, threshold, nhood_r=5, nhood_t=5):
+@numba.jit(nopython=True, fastmath=True)
+def _find_hough_peaks(
+    accumulator: np.ndarray,
+    threshold: int,
+    nhood_r: int = 5,
+    nhood_t: int = 5
+) -> List[Tuple[int, int, int]]:
+    '''
+    Find peaks in the accumulator array using local non-maximum suppression.
+
+    Args:
+        accumulator (np.ndarray): Hough accumulator array.
+        threshold (int): Minimum vote count to consider a peak.
+        nhood_r (int): Neighborhood size in the rho dimension.
+        nhood_t (int): Neighborhood size in the theta dimension.
+
+    Returns:
+        List[Tuple[int, int, int]]: List of (rho_idx, theta_idx, votes) tuples representing peaks.
+    '''
     num_rhos, num_thetas = accumulator.shape
     peaks = []
 
@@ -64,7 +117,17 @@ def _find_hough_peaks(accumulator, threshold, nhood_r=5, nhood_t=5):
 
     return peaks
 
-def hough_lines_to_endpoints(lines, img_shape):
+def hough_lines_to_endpoints(lines: np.ndarray, img_shape: Tuple[int, int]) -> np.ndarray:
+    '''
+    Convert Hough parameters (rho, theta) to segment endpoints.
+
+    Args:
+        lines (np.ndarray): Detected lines array of shape (N, 2).
+        img_shape (Tuple[int, int]): Dimensions of the image (H, W).
+
+    Returns:
+        np.ndarray: Line segment endpoints array of shape (N, 4) containing [x1, y1, x2, y2].
+    '''
     H, W = img_shape[:2]
     endpoints = []
 
@@ -105,7 +168,30 @@ def hough_lines_to_endpoints(lines, img_shape):
 
     return np.array(endpoints)
 
-def apply_hough(image, rho_res=1.0, theta_res=np.pi/180.0, threshold=50, edge_threshold=128.0, return_endpoints=False, device='cpu'):
+def apply_hough(
+    image: Union[np.ndarray, torch.Tensor],
+    rho_res: float = 1.0,
+    theta_res: float = np.pi/180.0,
+    threshold: int = 50,
+    edge_threshold: float = 128.0,
+    return_endpoints: bool = False,
+    device: str = 'cpu'
+) -> np.ndarray:
+    '''
+    Apply the Hough Transform for detecting lines in an image.
+
+    Args:
+        image (Union[np.ndarray, torch.Tensor]): Input image array or tensor.
+        rho_res (float): Resolution of the distance parameter in pixels.
+        theta_res (float): Resolution of the angle parameter in radians.
+        threshold (int): Minimum vote count to register a line.
+        edge_threshold (float): Threshold to classify a pixel as an edge.
+        return_endpoints (bool): Whether to return endpoint coords [x1, y1, x2, y2].
+        device (str): Device to use for PyTorch operations.
+
+    Returns:
+        np.ndarray: Hough parameters (rho, theta) or segment endpoints (x1, y1, x2, y2).
+    '''
     if isinstance(image, np.ndarray):
         img_tensor = torch.from_numpy(image)
     else:

@@ -1,16 +1,42 @@
-import torch
-import torch.nn.functional as F
-import numpy as np
-import numba
-from numba import jit
+from codon import *
 
-def _gaussian_kernel(kernel_size=5, sigma=1.4):
+
+def _gaussian_kernel(kernel_size: int = 5, sigma: float = 1.4) -> torch.Tensor:
+    '''
+    Generate a 2D Gaussian kernel.
+
+    Args:
+        kernel_size (int): Size of the Gaussian kernel.
+        sigma (float): Standard deviation of the Gaussian distribution.
+
+    Returns:
+        torch.Tensor: Normalized 2D Gaussian kernel of shape (1, 1, kernel_size, kernel_size).
+    '''
     x = torch.arange(kernel_size) - kernel_size // 2
     grid = x.repeat(kernel_size, 1)
     kernel = torch.exp(-(grid**2 + grid.T**2) / (2 * sigma**2))
     return (kernel / kernel.sum()).unsqueeze(0).unsqueeze(0)
 
-def preprocess_canny_pytorch(img_tensor, kernel_size=5, sigma=1.4, device='cpu'):
+def preprocess_canny_pytorch(
+    img_tensor: torch.Tensor,
+    kernel_size: int = 5,
+    sigma: float = 1.4,
+    device: str = 'cpu'
+) -> Tuple[np.ndarray, np.ndarray]:
+    '''
+    Preprocess image using PyTorch to calculate gradient magnitude and angles.
+
+    Apply Gaussian blur and Sobel filters to calculate image gradients.
+
+    Args:
+        img_tensor (torch.Tensor): Input image tensor of shape (H, W), (C, H, W) or (1, C, H, W).
+        kernel_size (int): Gaussian blur kernel size.
+        sigma (float): Gaussian blur standard deviation.
+        device (str): Computation device ('cpu' or 'cuda').
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]: Gradient magnitude and angles as NumPy arrays.
+    '''
     if img_tensor.dim() == 2:
         img_tensor = img_tensor.unsqueeze(0).unsqueeze(0)
     elif img_tensor.dim() == 3:
@@ -33,8 +59,18 @@ def preprocess_canny_pytorch(img_tensor, kernel_size=5, sigma=1.4, device='cpu')
     
     return magnitude.cpu().numpy(), angles.cpu().numpy()
 
-@jit(nopython=True, fastmath=True)
-def _non_max_suppression(mag, angle):
+@numba.jit(nopython=True, fastmath=True)
+def _non_max_suppression(mag: np.ndarray, angle: np.ndarray) -> np.ndarray:
+    '''
+    Perform non-maximum suppression to thin out edges.
+
+    Args:
+        mag (np.ndarray): Gradient magnitude array.
+        angle (np.ndarray): Gradient angle array.
+
+    Returns:
+        np.ndarray: Non-maximum suppressed magnitude array.
+    '''
     H, W = mag.shape
     nms = np.zeros((H, W), dtype=np.float32)
     
@@ -67,8 +103,19 @@ def _non_max_suppression(mag, angle):
 
     return nms
 
-@jit(nopython=True, fastmath=True)
-def _hysteresis_thresholding(nms_img, low_thresh, high_thresh):
+@numba.jit(nopython=True, fastmath=True)
+def _hysteresis_thresholding(nms_img: np.ndarray, low_thresh: float, high_thresh: float) -> np.ndarray:
+    '''
+    Perform hysteresis thresholding to link edges.
+
+    Args:
+        nms_img (np.ndarray): Non-maximum suppressed image.
+        low_thresh (float): Low threshold for weak edges.
+        high_thresh (float): High threshold for strong edges.
+
+    Returns:
+        np.ndarray: Binary edge map of shape (H, W) with values 0 or 255.
+    '''
     H, W = nms_img.shape
     res = np.zeros((H, W), dtype=np.uint8)
 
@@ -113,7 +160,28 @@ def _hysteresis_thresholding(nms_img, low_thresh, high_thresh):
 
     return res
 
-def apply_canny(image, low_thresh=50.0, high_thresh=150.0, kernel_size=5, sigma=1.4, device='cpu'):
+def apply_canny(
+    image: Union[np.ndarray, torch.Tensor],
+    low_thresh: float = 50.0,
+    high_thresh: float = 150.0,
+    kernel_size: int = 5,
+    sigma: float = 1.4,
+    device: str = 'cpu'
+) -> np.ndarray:
+    '''
+    Apply the Canny edge detection algorithm to an image.
+
+    Args:
+        image (Union[np.ndarray, torch.Tensor]): Input image array or tensor.
+        low_thresh (float): Low threshold for hysteresis.
+        high_thresh (float): High threshold for hysteresis.
+        kernel_size (int): Size of Gaussian kernel.
+        sigma (float): Standard deviation of Gaussian kernel.
+        device (str): Device to perform PyTorch computations on.
+
+    Returns:
+        np.ndarray: Detected binary edge map.
+    '''
     if isinstance(image, np.ndarray):
         img_tensor = torch.from_numpy(image)
     else:

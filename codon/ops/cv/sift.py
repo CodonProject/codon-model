@@ -1,10 +1,17 @@
-import torch
-import torch.nn.functional as F
-import numpy as np
-import numba
-from numba import jit
+from codon import *
 
-def _gaussian_blur_2d(img_tensor, sigma):
+
+def _gaussian_blur_2d(img_tensor: torch.Tensor, sigma: float) -> torch.Tensor:
+    '''
+    Apply separable 2D Gaussian blur on a PyTorch image tensor.
+
+    Args:
+        img_tensor (torch.Tensor): Input image tensor of shape (B, C, H, W).
+        sigma (float): Standard deviation of the Gaussian filter.
+
+    Returns:
+        torch.Tensor: Blurred image tensor.
+    '''
     radius = int(np.ceil(3.0 * sigma))
     kernel_size = 2 * radius + 1
     x = torch.arange(kernel_size, device=img_tensor.device) - radius
@@ -20,7 +27,27 @@ def _gaussian_blur_2d(img_tensor, sigma):
     out = F.conv2d(out, k_y)
     return out
 
-def build_pyramids_pytorch(img_tensor, n_octaves=4, n_scales=3, sigma=1.6, device='cpu'):
+def build_pyramids_pytorch(
+    img_tensor: torch.Tensor,
+    n_octaves: int = 4,
+    n_scales: int = 3,
+    sigma: float = 1.6,
+    device: str = 'cpu'
+) -> Tuple[List[List[np.ndarray]], List[List[np.ndarray]]]:
+    '''
+    Build Gaussian and Difference-of-Gaussian (DoG) pyramids using PyTorch.
+
+    Args:
+        img_tensor (torch.Tensor): Input image tensor of shape (H, W), (C, H, W) or (1, C, H, W).
+        n_octaves (int): Number of octaves in scale space.
+        n_scales (int): Number of scales per octave.
+        sigma (float): Initial Gaussian blur sigma.
+        device (str): Device to compute pyramids on.
+
+    Returns:
+        Tuple[List[List[np.ndarray]], List[List[np.ndarray]]]:
+            Gaussian pyramid and Difference-of-Gaussian pyramid.
+    '''
     if img_tensor.dim() == 2:
         img_tensor = img_tensor.unsqueeze(0).unsqueeze(0)
     elif img_tensor.dim() == 3:
@@ -65,8 +92,18 @@ def build_pyramids_pytorch(img_tensor, n_octaves=4, n_scales=3, sigma=1.6, devic
 
     return gaussian_pyramid, dog_pyramid
 
-@jit(nopython=True, fastmath=True)
-def _solve_3x3(A, b):
+@numba.jit(nopython=True, fastmath=True)
+def _solve_3x3(A: np.ndarray, b: np.ndarray) -> Tuple[np.ndarray, bool]:
+    '''
+    Solve linear system A x = b for a 3x3 matrix using Cramer's rule.
+
+    Args:
+        A (np.ndarray): 3x3 coefficient matrix.
+        b (np.ndarray): 3D vector.
+
+    Returns:
+        Tuple[np.ndarray, bool]: Solution vector x and success flag.
+    '''
     a00, a01, a02 = A[0, 0], A[0, 1], A[0, 2]
     a10, a11, a12 = A[1, 0], A[1, 1], A[1, 2]
     a20, a21, a22 = A[2, 0], A[2, 1], A[2, 2]
@@ -98,8 +135,30 @@ def _solve_3x3(A, b):
     res = np.array([x0, x1, x2], dtype=np.float32)
     return res, True
 
-@jit(nopython=True, fastmath=True)
-def _refine_keypoint(dog_octave, s, y, x, contrast_thresh, edge_thresh):
+@numba.jit(nopython=True, fastmath=True)
+def _refine_keypoint(
+    dog_octave: List[np.ndarray],
+    s: int,
+    y: int,
+    x: int,
+    contrast_thresh: float,
+    edge_thresh: float
+) -> Tuple[bool, float, float, float, float]:
+    '''
+    Refine SIFT keypoint position and scale to sub-pixel accuracy.
+
+    Args:
+        dog_octave (List[np.ndarray]): DoG scale images in current octave.
+        s (int): Scale index.
+        y (int): Y coordinate.
+        x (int): X coordinate.
+        contrast_thresh (float): Contrast threshold for keypoint rejection.
+        edge_thresh (float): Edge response ratio threshold.
+
+    Returns:
+        Tuple[bool, float, float, float, float]:
+            Success flag, refined x, refined y, refined s, and refined contrast value.
+    '''
     max_steps = 5
     img_h, img_w = dog_octave[0].shape
 
@@ -151,8 +210,25 @@ def _refine_keypoint(dog_octave, s, y, x, contrast_thresh, edge_thresh):
 
     return True, x + offset[0], y + offset[1], s + offset[2], contrast
 
-@jit(nopython=True, fastmath=True)
-def _assign_orientation(img, x, y, scale_sigma):
+@numba.jit(nopython=True, fastmath=True)
+def _assign_orientation(
+    img: np.ndarray,
+    x: float,
+    y: float,
+    scale_sigma: float
+) -> List[float]:
+    '''
+    Assign dominant orientation(s) to a keypoint.
+
+    Args:
+        img (np.ndarray): Gaussian image at keypoint scale.
+        x (float): Sub-pixel X coordinate.
+        y (float): Sub-pixel Y coordinate.
+        scale_sigma (float): Keypoint scale sigma.
+
+    Returns:
+        List[float]: List of orientation angles in radians.
+    '''
     H, W = img.shape
     radius = int(np.ceil(3.0 * 1.5 * scale_sigma))
     hist = np.zeros(36, dtype=np.float32)
@@ -195,8 +271,31 @@ def _assign_orientation(img, x, y, scale_sigma):
 
     return orientations
 
-@jit(nopython=True, fastmath=True)
-def _compute_sift_descriptor(img, x, y, main_angle, scale_sigma, d=4, n_bins=8):
+@numba.jit(nopython=True, fastmath=True)
+def _compute_sift_descriptor(
+    img: np.ndarray,
+    x: float,
+    y: float,
+    main_angle: float,
+    scale_sigma: float,
+    d: int = 4,
+    n_bins: int = 8
+) -> np.ndarray:
+    '''
+    Compute 128-dimensional SIFT descriptor vector for a keypoint.
+
+    Args:
+        img (np.ndarray): Gaussian image patch.
+        x (float): Keypoint X coordinate.
+        y (float): Keypoint Y coordinate.
+        main_angle (float): Keypoint orientation angle in radians.
+        scale_sigma (float): Keypoint scale sigma.
+        d (int): Width of keypoint descriptor grid (default 4 for 4x4).
+        n_bins (int): Number of orientation histogram bins per sub-region (default 8).
+
+    Returns:
+        np.ndarray: Normalized descriptor vector of size d*d*n_bins.
+    '''
     H, W = img.shape
     cos_a = np.cos(-main_angle)
     sin_a = np.sin(-main_angle)
@@ -262,7 +361,32 @@ def _compute_sift_descriptor(img, x, y, main_angle, scale_sigma, d=4, n_bins=8):
 
     return vec
 
-def apply_sift(image, n_octaves=4, n_scales=3, sigma=1.6, contrast_thresh=0.04, edge_thresh=10.0, device='cpu'):
+def apply_sift(
+    image: Union[np.ndarray, torch.Tensor],
+    n_octaves: int = 4,
+    n_scales: int = 3,
+    sigma: float = 1.6,
+    contrast_thresh: float = 0.04,
+    edge_thresh: float = 10.0,
+    device: str = 'cpu'
+) -> Tuple[np.ndarray, np.ndarray]:
+    '''
+    Detect SIFT keypoints and compute 128-dimensional descriptors.
+
+    Args:
+        image (Union[np.ndarray, torch.Tensor]): Input image array or tensor.
+        n_octaves (int): Number of octaves.
+        n_scales (int): Number of scales per octave.
+        sigma (float): Base Gaussian smoothing parameter.
+        contrast_thresh (float): Minimum contrast threshold for keypoints.
+        edge_thresh (float): Edge response ratio threshold.
+        device (str): Computation device for PyTorch.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]:
+            - Keypoints array of shape (N, 4) containing [x, y, sigma, orientation].
+            - Descriptors array of shape (N, 128).
+    '''
     if isinstance(image, np.ndarray):
         img_tensor = torch.from_numpy(image)
     else:

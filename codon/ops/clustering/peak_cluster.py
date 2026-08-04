@@ -1,8 +1,16 @@
-import torch
-import numpy as np
-from numba import jit
+from codon import *
 
-def _rgb_to_lab_pytorch(img_tensor):
+
+def _rgb_to_lab_pytorch(img_tensor: torch.Tensor) -> torch.Tensor:
+    '''
+    Convert an RGB or sRGB image tensor to CIELAB color space using PyTorch.
+
+    Args:
+        img_tensor (torch.Tensor): Image tensor of shape (3, H, W) or (1, 3, H, W).
+
+    Returns:
+        torch.Tensor: CIELAB image tensor of shape (3, H, W).
+    '''
     if img_tensor.max() > 1.0:
         img_tensor = img_tensor / 255.0
 
@@ -36,7 +44,22 @@ def _rgb_to_lab_pytorch(img_tensor):
     lab = torch.cat([L, a, b], dim=-1).squeeze(0).permute(2, 0, 1)
     return lab
 
-def preprocess_quickshift_pytorch(img_tensor, ratio=1.0, device='cpu'):
+def preprocess_quickshift_pytorch(
+    img_tensor: torch.Tensor,
+    ratio: float = 1.0,
+    device: str = 'cpu'
+) -> np.ndarray:
+    '''
+    Preprocess image tensor to LAB and construct a 5D feature grid.
+
+    Args:
+        img_tensor (torch.Tensor): Input image tensor of shape (H, W), (1, H, W) or (3, H, W).
+        ratio (float): Ratio to scale the spatial coordinate dimensions.
+        device (str): Device to use for PyTorch operations.
+
+    Returns:
+        np.ndarray: 5D features grid (L, a, b, y*ratio, x*ratio) of shape (H, W, 5).
+    '''
     if img_tensor.dim() == 2:
         img_tensor = img_tensor.unsqueeze(0).repeat(3, 1, 1)
     elif img_tensor.dim() == 3 and img_tensor.shape[0] == 1:
@@ -65,8 +88,18 @@ def preprocess_quickshift_pytorch(img_tensor, ratio=1.0, device='cpu'):
 
     return features.cpu().numpy()
 
-@jit(nopython=True, fastmath=True)
-def _compute_density(features, kernel_size):
+@numba.jit(nopython=True, fastmath=True)
+def _compute_density(features: np.ndarray, kernel_size: float) -> np.ndarray:
+    '''
+    Compute local density estimation for each pixel based on a Gaussian kernel.
+
+    Args:
+        features (np.ndarray): 5D feature grid of shape (H, W, 5).
+        kernel_size (float): Bandwidth of the kernel.
+
+    Returns:
+        np.ndarray: Densities map of shape (H, W).
+    '''
     H, W, _ = features.shape
     densities = np.zeros((H, W), dtype=np.float32)
     
@@ -99,8 +132,25 @@ def _compute_density(features, kernel_size):
 
     return densities
 
-@jit(nopython=True, fastmath=True)
-def _quickshift_find_parents(features, densities, kernel_size, max_dist):
+@numba.jit(nopython=True, fastmath=True)
+def _quickshift_find_parents(
+    features: np.ndarray,
+    densities: np.ndarray,
+    kernel_size: float,
+    max_dist: float
+) -> np.ndarray:
+    '''
+    Find parent pointers for each pixel pointing to nearest pixel of higher density.
+
+    Args:
+        features (np.ndarray): 5D feature grid of shape (H, W, 5).
+        densities (np.ndarray): Densities map of shape (H, W).
+        kernel_size (float): Bandwidth of the kernel.
+        max_dist (float): Maximum link distance limit.
+
+    Returns:
+        np.ndarray: Parent pointers grid of shape (H, W).
+    '''
     H, W, _ = features.shape
     
     search_radius = max(int(np.ceil(max_dist)), int(np.ceil(3.0 * kernel_size)))
@@ -151,8 +201,17 @@ def _quickshift_find_parents(features, densities, kernel_size, max_dist):
 
     return parents
 
-@jit(nopython=True, fastmath=True)
-def _flat_tree_segmentation(parents):
+@numba.jit(nopython=True, fastmath=True)
+def _flat_tree_segmentation(parents: np.ndarray) -> np.ndarray:
+    '''
+    Segment the parents tree structure to assign unique cluster label to each node.
+
+    Args:
+        parents (np.ndarray): Parent pointers grid of shape (H, W).
+
+    Returns:
+        np.ndarray: Labels grid map of shape (H, W).
+    '''
     H, W = parents.shape
     N = H * W
     flat_parents = parents.ravel()
@@ -184,8 +243,18 @@ def _flat_tree_segmentation(parents):
 
     return labels
 
-@jit(nopython=True, fastmath=True)
-def _compute_density_nd(data, kernel_size):
+@numba.jit(nopython=True, fastmath=True)
+def _compute_density_nd(data: np.ndarray, kernel_size: float) -> np.ndarray:
+    '''
+    Compute density for generic N-dimensional data points.
+
+    Args:
+        data (np.ndarray): Features matrix of shape (N, D).
+        kernel_size (float): Bandwidth of the kernel.
+
+    Returns:
+        np.ndarray: Densities array of shape (N,).
+    '''
     N, D = data.shape
     densities = np.zeros(N, dtype=np.float32)
     inv_sigma2 = 1.0 / (2.0 * kernel_size * kernel_size)
@@ -201,8 +270,19 @@ def _compute_density_nd(data, kernel_size):
         densities[i] = dens
     return densities
 
-@jit(nopython=True, fastmath=True)
-def _quickshift_find_parents_nd(data, densities, max_dist):
+@numba.jit(nopython=True, fastmath=True)
+def _quickshift_find_parents_nd(data: np.ndarray, densities: np.ndarray, max_dist: float) -> np.ndarray:
+    '''
+    Find parent links for N-dimensional data points.
+
+    Args:
+        data (np.ndarray): Features matrix of shape (N, D).
+        densities (np.ndarray): Densities array of shape (N,).
+        max_dist (float): Maximum link distance limit.
+
+    Returns:
+        np.ndarray: Parent pointers array of shape (N,).
+    '''
     N, D = data.shape
     max_dist_sq = max_dist * max_dist
     parents = np.zeros(N, dtype=np.int32)
@@ -232,8 +312,17 @@ def _quickshift_find_parents_nd(data, densities, max_dist):
         parents[i] = best_parent
     return parents
 
-@jit(nopython=True, fastmath=True)
-def _flat_tree_segmentation_nd(parents):
+@numba.jit(nopython=True, fastmath=True)
+def _flat_tree_segmentation_nd(parents: np.ndarray) -> np.ndarray:
+    '''
+    Segment the parents tree structure for N-dimensional data.
+
+    Args:
+        parents (np.ndarray): Parent pointers array of shape (N,).
+
+    Returns:
+        np.ndarray: Labels array of shape (N,).
+    '''
     N = len(parents)
     flat_parents = parents.copy()
 
@@ -261,7 +350,22 @@ def _flat_tree_segmentation_nd(parents):
 
     return labels
 
-def compute_peak_clustering(data, kernel_size=2.0, max_dist=10.0):
+def compute_peak_clustering(
+    data: Union[np.ndarray, torch.Tensor],
+    kernel_size: float = 2.0,
+    max_dist: float = 10.0
+) -> np.ndarray:
+    '''
+    Perform generic peak clustering (quickshift) on a feature matrix.
+
+    Args:
+        data (Union[np.ndarray, torch.Tensor]): Features matrix of shape (N, D).
+        kernel_size (float): Bandwidth of local density kernel.
+        max_dist (float): Maximum link distance limit.
+
+    Returns:
+        np.ndarray: Labels array of shape (N,).
+    '''
     if isinstance(data, torch.Tensor):
         X = data.detach().cpu().numpy()
     else:
@@ -273,7 +377,26 @@ def compute_peak_clustering(data, kernel_size=2.0, max_dist=10.0):
     labels = _flat_tree_segmentation_nd(parents)
     return labels
 
-def apply_peak_clustering(image, ratio=0.5, kernel_size=2.0, max_dist=10.0, device='cpu'):
+def apply_peak_clustering(
+    image: Union[np.ndarray, torch.Tensor],
+    ratio: float = 0.5,
+    kernel_size: float = 2.0,
+    max_dist: float = 10.0,
+    device: str = 'cpu'
+) -> np.ndarray:
+    '''
+    Apply quickshift / peak clustering segmentation to an image.
+
+    Args:
+        image (Union[np.ndarray, torch.Tensor]): Input image array or tensor.
+        ratio (float): Ratio to scale spatial coordinate features.
+        kernel_size (float): Bandwidth of local density kernel.
+        max_dist (float): Maximum link distance limit.
+        device (str): Device to use for PyTorch operations.
+
+    Returns:
+        np.ndarray: Labels grid map of shape (H, W).
+    '''
     if isinstance(image, np.ndarray):
         if image.ndim == 3 and image.shape[2] == 3:
             image = image.transpose(2, 0, 1)

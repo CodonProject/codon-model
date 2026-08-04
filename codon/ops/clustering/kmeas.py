@@ -1,8 +1,16 @@
-import torch
-import numpy as np
-from numba import jit
+from codon import *
 
-def _rgb_to_lab_pytorch(img_tensor):
+
+def _rgb_to_lab_pytorch(img_tensor: torch.Tensor) -> torch.Tensor:
+    '''
+    Convert an RGB or sRGB image tensor to CIELAB color space using PyTorch.
+
+    Args:
+        img_tensor (torch.Tensor): Image tensor of shape (3, H, W) or (1, 3, H, W).
+
+    Returns:
+        torch.Tensor: CIELAB image tensor of shape (3, H, W).
+    '''
     if img_tensor.max() > 1.0:
         img_tensor = img_tensor / 255.0
 
@@ -36,7 +44,24 @@ def _rgb_to_lab_pytorch(img_tensor):
     lab = torch.cat([L, a, b], dim=-1).squeeze(0).permute(2, 0, 1)
     return lab
 
-def preprocess_kmeans_pytorch(img_tensor, use_lab=True, spatial_weight=0.0, device='cpu'):
+def preprocess_kmeans_pytorch(
+    img_tensor: torch.Tensor,
+    use_lab: bool = True,
+    spatial_weight: float = 0.0,
+    device: str = 'cpu'
+) -> Tuple[np.ndarray, int, int]:
+    '''
+    Preprocess image tensor to generate a flattened feature matrix for K-Means.
+
+    Args:
+        img_tensor (torch.Tensor): Image tensor of shape (H, W), (C, H, W) or (1, C, H, W).
+        use_lab (bool): Whether to convert RGB features to LAB space.
+        spatial_weight (float): Multiplier weight for spatial coordinates (y, x) feature dimensions.
+        device (str): Device to use for PyTorch operations.
+
+    Returns:
+        Tuple[np.ndarray, int, int]: Flattened feature matrix of shape (N, D), H, and W.
+    '''
     if img_tensor.dim() == 2:
         img_tensor = img_tensor.unsqueeze(0)
         
@@ -71,8 +96,19 @@ def preprocess_kmeans_pytorch(img_tensor, use_lab=True, spatial_weight=0.0, devi
 
     return data_flat.cpu().numpy(), H, W
 
-@jit(nopython=True, fastmath=True)
-def _kmeans_pp_init(data, K, seed=42):
+@numba.jit(nopython=True, fastmath=True)
+def _kmeans_pp_init(data: np.ndarray, K: int, seed: int = 42) -> np.ndarray:
+    '''
+    Initialize K-Means cluster centers using K-Means++ algorithm.
+
+    Args:
+        data (np.ndarray): Flattened feature matrix of shape (N, D).
+        K (int): Number of clusters.
+        seed (int): Random seed.
+
+    Returns:
+        np.ndarray: Initial cluster centers of shape (K, D).
+    '''
     np.random.seed(seed)
     N, D = data.shape
     centers = np.zeros((K, D), dtype=np.float32)
@@ -115,8 +151,19 @@ def _kmeans_pp_init(data, K, seed=42):
 
     return centers
 
-@jit(nopython=True, fastmath=True)
-def _kmeans_random_init(data, K, seed=42):
+@numba.jit(nopython=True, fastmath=True)
+def _kmeans_random_init(data: np.ndarray, K: int, seed: int = 42) -> np.ndarray:
+    '''
+    Initialize K-Means cluster centers randomly from data points.
+
+    Args:
+        data (np.ndarray): Flattened feature matrix of shape (N, D).
+        K (int): Number of clusters.
+        seed (int): Random seed.
+
+    Returns:
+        np.ndarray: Initial cluster centers of shape (K, D).
+    '''
     np.random.seed(seed)
     N, D = data.shape
     indices = np.random.choice(N, K, replace=False)
@@ -127,8 +174,25 @@ def _kmeans_random_init(data, K, seed=42):
             centers[k, d] = data[idx, d]
     return centers
 
-@jit(nopython=True, fastmath=True)
-def _kmeans_lloyd(data, centers, max_iter=100, tol=1e-4):
+@numba.jit(nopython=True, fastmath=True)
+def _kmeans_lloyd(
+    data: np.ndarray,
+    centers: np.ndarray,
+    max_iter: int = 100,
+    tol: float = 1e-4
+) -> Tuple[np.ndarray, np.ndarray]:
+    '''
+    Run standard Lloyd's algorithm for K-Means.
+
+    Args:
+        data (np.ndarray): Flattened feature matrix of shape (N, D).
+        centers (np.ndarray): Initial cluster centers of shape (K, D).
+        max_iter (int): Maximum iteration count.
+        tol (float): Convergence threshold.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]: Assigned labels grid of shape (N,) and final cluster centers of shape (K, D).
+    '''
     N, D = data.shape
     K = centers.shape[0]
 
@@ -183,20 +247,29 @@ def _kmeans_lloyd(data, centers, max_iter=100, tol=1e-4):
 
     return labels, centers
 
-# ==========================================
-# 纯数据接口: compute_kmeans
-# ==========================================
-def compute_kmeans(data, n_clusters=5, init='kmeans++', max_iter=100, tol=1e-4, seed=42):
-    """
-    对纯特征矩阵 X (N, D) 执行 K-Means / K-Means++ 聚类
-    :param data: NumPy 数组或 PyTorch Tensor，形状为 (N, D)
-    :param n_clusters: 聚类簇数 K
-    :param init: 初始化策略 'kmeans++' 或 'random'
-    :param max_iter: 最大迭代次数
-    :param tol: 中心位移收敛阈值
-    :param seed: 随机种子
-    :return: labels (N,), centers (K, D)
-    """
+
+def compute_kmeans(
+    data: Union[np.ndarray, torch.Tensor],
+    n_clusters: int = 5,
+    init: str = 'kmeans++',
+    max_iter: int = 100,
+    tol: float = 1e-4,
+    seed: int = 42
+) -> Tuple[np.ndarray, np.ndarray]:
+    '''
+    Perform K-Means or K-Means++ clustering on a feature matrix.
+
+    Args:
+        data (Union[np.ndarray, torch.Tensor]): Features matrix of shape (N, D).
+        n_clusters (int): Number of target clusters K.
+        init (str): Center initialization strategy ('kmeans++' or 'random').
+        max_iter (int): Maximum number of iterations.
+        tol (float): Convergence tolerance.
+        seed (int): Random seed.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]: Labels array of shape (N,) and centers of shape (K, D).
+    '''
     if isinstance(data, torch.Tensor):
         X = data.detach().cpu().numpy()
     else:
@@ -213,16 +286,33 @@ def compute_kmeans(data, n_clusters=5, init='kmeans++', max_iter=100, tol=1e-4, 
     return labels, centers
 
 def apply_kmeans(
-    image, 
-    n_clusters=5, 
-    init='kmeans++', 
-    max_iter=100, 
-    tol=1e-4, 
-    use_lab=True, 
-    spatial_weight=0.0, 
-    seed=42, 
-    device='cpu'
-):
+    image: Union[np.ndarray, torch.Tensor],
+    n_clusters: int = 5,
+    init: str = 'kmeans++',
+    max_iter: int = 100,
+    tol: float = 1e-4,
+    use_lab: bool = True,
+    spatial_weight: float = 0.0,
+    seed: int = 42,
+    device: str = 'cpu'
+) -> Tuple[np.ndarray, np.ndarray]:
+    '''
+    Apply K-Means clustering segmentation on an image.
+
+    Args:
+        image (Union[np.ndarray, torch.Tensor]): Input image array or tensor.
+        n_clusters (int): Number of clusters.
+        init (str): Center initialization strategy ('kmeans++' or 'random').
+        max_iter (int): Maximum number of iterations.
+        tol (float): Convergence tolerance.
+        use_lab (bool): Whether to perform clustering in LAB color space.
+        spatial_weight (float): Multiplier weight for spatial coordinates.
+        seed (int): Random seed.
+        device (str): Device to use for PyTorch operations.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]: Labels grid array of shape (H, W) and final centers of shape (K, D).
+    '''
     if isinstance(image, np.ndarray):
         img_tensor = torch.from_numpy(image)
     else:

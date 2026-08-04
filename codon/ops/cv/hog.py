@@ -1,9 +1,20 @@
-import torch
-import torch.nn.functional as F
-import numpy as np
-from numba import jit
+from codon import *
 
-def preprocess_hog_pytorch(img_tensor, device='cpu'):
+
+def preprocess_hog_pytorch(
+    img_tensor: torch.Tensor,
+    device: str = 'cpu'
+) -> Tuple[np.ndarray, np.ndarray]:
+    '''
+    Preprocess image tensor with PyTorch to compute gradient magnitude and angle.
+
+    Args:
+        img_tensor (torch.Tensor): Input image tensor of shape (H, W), (C, H, W) or (1, C, H, W).
+        device (str): Device to perform PyTorch calculations.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]: Gradient magnitude and angle arrays.
+    '''
     if img_tensor.dim() == 2:
         img_tensor = img_tensor.unsqueeze(0).unsqueeze(0)
     elif img_tensor.dim() == 3:
@@ -34,8 +45,31 @@ def preprocess_hog_pytorch(img_tensor, device='cpu'):
 
     return mag.cpu().numpy(), angle.cpu().numpy()
 
-@jit(nopython=True, fastmath=True)
-def _compute_cell_histograms(mag, angle, cell_h, cell_w, n_cells_y, n_cells_x, orientations=9):
+@numba.jit(nopython=True, fastmath=True)
+def _compute_cell_histograms(
+    mag: np.ndarray,
+    angle: np.ndarray,
+    cell_h: int,
+    cell_w: int,
+    n_cells_y: int,
+    n_cells_x: int,
+    orientations: int = 9
+) -> np.ndarray:
+    '''
+    Compute orientation histograms for each cell.
+
+    Args:
+        mag (np.ndarray): Gradient magnitude array.
+        angle (np.ndarray): Gradient angle array.
+        cell_h (int): Cell height in pixels.
+        cell_w (int): Cell width in pixels.
+        n_cells_y (int): Number of cells along Y axis.
+        n_cells_x (int): Number of cells along X axis.
+        orientations (int): Number of orientation bins.
+
+    Returns:
+        np.ndarray: Cell histograms array of shape (n_cells_y, n_cells_x, orientations).
+    '''
     histograms = np.zeros((n_cells_y, n_cells_x, orientations), dtype=np.float32)
     bin_width = np.pi / orientations
 
@@ -62,8 +96,25 @@ def _compute_cell_histograms(mag, angle, cell_h, cell_w, n_cells_y, n_cells_x, o
 
     return histograms
 
-@jit(nopython=True, fastmath=True)
-def _normalize_blocks(histograms, block_h, block_w, eps=1e-5):
+@numba.jit(nopython=True, fastmath=True)
+def _normalize_blocks(
+    histograms: np.ndarray,
+    block_h: int,
+    block_w: int,
+    eps: float = 1e-5
+) -> np.ndarray:
+    '''
+    Normalize cell histograms within overlapping blocks (L2-Hys normalization).
+
+    Args:
+        histograms (np.ndarray): Cell histograms.
+        block_h (int): Block height in number of cells.
+        block_w (int): Block width in number of cells.
+        eps (float): Small constant for numerical stability.
+
+    Returns:
+        np.ndarray: Flattened HOG feature descriptor.
+    '''
     n_cells_y, n_cells_x, orientations = histograms.shape
     n_blocks_y = n_cells_y - block_h + 1
     n_blocks_x = n_cells_x - block_w + 1
@@ -86,7 +137,24 @@ def _normalize_blocks(histograms, block_h, block_w, eps=1e-5):
 
     return blocks.ravel()
 
-def _visualize_hog(histograms, cell_h, cell_w, orientations=9):
+def _visualize_hog(
+    histograms: np.ndarray,
+    cell_h: int,
+    cell_w: int,
+    orientations: int = 9
+) -> np.ndarray:
+    '''
+    Create a visual representation image of HOG histograms.
+
+    Args:
+        histograms (np.ndarray): Cell histograms.
+        cell_h (int): Cell height in pixels.
+        cell_w (int): Cell width in pixels.
+        orientations (int): Number of orientation bins.
+
+    Returns:
+        np.ndarray: Visualization image of HOG features.
+    '''
     n_cells_y, n_cells_x, _ = histograms.shape
     hog_img = np.zeros((n_cells_y * cell_h, n_cells_x * cell_w), dtype=np.float32)
     
@@ -121,7 +189,29 @@ def _visualize_hog(histograms, cell_h, cell_w, orientations=9):
 
     return hog_img
 
-def apply_hog(image, orientations=9, pixels_per_cell=(8, 8), cells_per_block=(2, 2), visualize=False, device='cpu'):
+def apply_hog(
+    image: Union[np.ndarray, torch.Tensor],
+    orientations: int = 9,
+    pixels_per_cell: Tuple[int, int] = (8, 8),
+    cells_per_block: Tuple[int, int] = (2, 2),
+    visualize: bool = False,
+    device: str = 'cpu'
+) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
+    '''
+    Extract Histogram of Oriented Gradients (HOG) features from an image.
+
+    Args:
+        image (Union[np.ndarray, torch.Tensor]): Input image array or tensor.
+        orientations (int): Number of orientation bins.
+        pixels_per_cell (Tuple[int, int]): Size of a cell in pixels (height, width).
+        cells_per_block (Tuple[int, int]): Number of cells in each block (height, width).
+        visualize (bool): Whether to return a HOG visualization image.
+        device (str): Device to use for PyTorch operations.
+
+    Returns:
+        Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
+            HOG descriptor vector, and optionally HOG visualization image.
+    '''
     if isinstance(image, np.ndarray):
         img_tensor = torch.from_numpy(image)
     else:

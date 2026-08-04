@@ -1,9 +1,16 @@
-import torch
-import torch.nn.functional as F
-import numpy as np
-from numba import jit
+from codon import *
 
-def _rgb_to_lab_pytorch(img_tensor):
+
+def _rgb_to_lab_pytorch(img_tensor: torch.Tensor) -> torch.Tensor:
+    '''
+    Convert an RGB or sRGB image tensor to CIELAB color space using PyTorch.
+
+    Args:
+        img_tensor (torch.Tensor): Image tensor of shape (3, H, W) or (1, 3, H, W).
+
+    Returns:
+        torch.Tensor: CIELAB image tensor of shape (3, H, W).
+    '''
     if img_tensor.max() > 1.0:
         img_tensor = img_tensor / 255.0
 
@@ -37,7 +44,24 @@ def _rgb_to_lab_pytorch(img_tensor):
     lab = torch.cat([L, a, b], dim=-1).squeeze(0).permute(2, 0, 1)
     return lab
 
-def preprocess_dbscan_pytorch(img_tensor, use_lab=True, spatial_weight=0.0, device='cpu'):
+def preprocess_dbscan_pytorch(
+    img_tensor: torch.Tensor,
+    use_lab: bool = True,
+    spatial_weight: float = 0.0,
+    device: str = 'cpu'
+) -> Tuple[np.ndarray, int, int]:
+    '''
+    Preprocess image tensor to generate a flattened feature matrix for DBSCAN.
+
+    Args:
+        img_tensor (torch.Tensor): Image tensor of shape (H, W), (C, H, W) or (1, C, H, W).
+        use_lab (bool): Whether to convert RGB features to LAB space.
+        spatial_weight (float): Multiplier for spatial coords (y, x) feature dimensions.
+        device (str): Device to use for PyTorch operations.
+
+    Returns:
+        Tuple[np.ndarray, int, int]: Flattened feature matrix of shape (N, D), H, and W.
+    '''
     if img_tensor.dim() == 2:
         img_tensor = img_tensor.unsqueeze(0)
         
@@ -71,8 +95,33 @@ def preprocess_dbscan_pytorch(img_tensor, use_lab=True, spatial_weight=0.0, devi
 
     return data_flat.cpu().numpy(), H, W
 
-@jit(nopython=True, fastmath=True)
-def _region_query(data, point_idx, eps_sq, spatial_h, spatial_w, spatial_weight, max_spatial_diff, neighbor_buf):
+@numba.jit(nopython=True, fastmath=True)
+def _region_query(
+    data: np.ndarray,
+    point_idx: int,
+    eps_sq: float,
+    spatial_h: int,
+    spatial_w: int,
+    spatial_weight: float,
+    max_spatial_diff: int,
+    neighbor_buf: np.ndarray
+) -> int:
+    '''
+    Query the neighbors of a point within epsilon distance.
+
+    Args:
+        data (np.ndarray): Flattened feature matrix of shape (N, D).
+        point_idx (int): Index of the reference query point.
+        eps_sq (float): Squared epsilon search distance threshold.
+        spatial_h (int): Spatial height limit.
+        spatial_w (int): Spatial width limit.
+        spatial_weight (float): Weight of spatial coordinate features.
+        max_spatial_diff (int): Maximum spatial window boundary.
+        neighbor_buf (np.ndarray): Buffer array to store indexes of found neighbors.
+
+    Returns:
+        int: Number of neighbors found.
+    '''
     N, D = data.shape
     count = 0
 
@@ -111,8 +160,29 @@ def _region_query(data, point_idx, eps_sq, spatial_h, spatial_w, spatial_weight,
 
     return count
 
-@jit(nopython=True, fastmath=True)
-def _dbscan_numba(data, eps, min_samples, spatial_h=0, spatial_w=0, spatial_weight=0.0):
+@numba.jit(nopython=True, fastmath=True)
+def _dbscan_numba(
+    data: np.ndarray,
+    eps: float,
+    min_samples: int,
+    spatial_h: int = 0,
+    spatial_w: int = 0,
+    spatial_weight: float = 0.0
+) -> np.ndarray:
+    '''
+    Execute DBSCAN clustering algorithm using Numba acceleration.
+
+    Args:
+        data (np.ndarray): Flattened feature matrix of shape (N, D).
+        eps (float): Epsilon neighborhood search distance.
+        min_samples (int): Minimum number of neighbor samples to classify as core points.
+        spatial_h (int): Height of the image grid if spatial clustering.
+        spatial_w (int): Width of the image grid if spatial clustering.
+        spatial_weight (float): Multiplier weight for spatial features.
+
+    Returns:
+        np.ndarray: Assigned cluster labels array of shape (N,).
+    '''
     N, _ = data.shape
     eps_sq = eps * eps
     
@@ -178,7 +248,16 @@ def _dbscan_numba(data, eps, min_samples, spatial_h=0, spatial_w=0, spatial_weig
 
     return labels
 
-def visualize_dbscan_result(labels):
+def visualize_dbscan_result(labels: np.ndarray) -> Tuple[np.ndarray, int, int]:
+    '''
+    Generate a colored visualization of the DBSCAN cluster label grid.
+
+    Args:
+        labels (np.ndarray): Assigned labels grid of shape (H, W).
+
+    Returns:
+        Tuple[np.ndarray, int, int]: Colored RGB image, number of clusters, and noise pixel count.
+    '''
     import matplotlib.pyplot as plt
     H, W = labels.shape
     vis_rgb = np.zeros((H, W, 3), dtype=np.uint8)
@@ -198,7 +277,18 @@ def visualize_dbscan_result(labels):
     return vis_rgb, n_clusters, np.sum(labels == -1)
 
 
-def compute_dbscan(data, eps=0.5, min_samples=5):
+def compute_dbscan(data: Union[np.ndarray, torch.Tensor], eps: float = 0.5, min_samples: int = 5) -> np.ndarray:
+    '''
+    Perform standard DBSCAN clustering on generic feature matrix.
+
+    Args:
+        data (Union[np.ndarray, torch.Tensor]): Features matrix of shape (N, D).
+        eps (float): Epsilon neighborhood search distance.
+        min_samples (int): Minimum points required to form a core point cluster.
+
+    Returns:
+        np.ndarray: Labels array of shape (N,).
+    '''
     if isinstance(data, torch.Tensor):
         X = data.detach().cpu().numpy()
     else:
@@ -208,7 +298,28 @@ def compute_dbscan(data, eps=0.5, min_samples=5):
     labels = _dbscan_numba(X, eps=eps, min_samples=min_samples, spatial_h=0, spatial_w=0, spatial_weight=0.0)
     return labels
 
-def apply_dbscan(image, eps=6.0, min_samples=15, use_lab=True, spatial_weight=0.0, device='cpu'):
+def apply_dbscan(
+    image: Union[np.ndarray, torch.Tensor],
+    eps: float = 6.0,
+    min_samples: int = 15,
+    use_lab: bool = True,
+    spatial_weight: float = 0.0,
+    device: str = 'cpu'
+) -> np.ndarray:
+    '''
+    Apply DBSCAN color/spatial clustering segmentation on an image.
+
+    Args:
+        image (Union[np.ndarray, torch.Tensor]): Input image array or tensor.
+        eps (float): Epsilon search distance.
+        min_samples (int): Minimum points to form core clusters.
+        use_lab (bool): Whether to perform clustering in LAB color space.
+        spatial_weight (float): Multiplier weight for spatial coordinates.
+        device (str): Device to use for PyTorch operations.
+
+    Returns:
+        np.ndarray: Labels grid array of shape (H, W).
+    '''
     if isinstance(image, np.ndarray):
         img_tensor = torch.from_numpy(image)
     else:

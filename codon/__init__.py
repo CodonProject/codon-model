@@ -1,4 +1,7 @@
 import math
+import numpy as np
+import numba
+
 import torch
 import torch.optim as optim
 import torch.nn as nn
@@ -15,6 +18,6 @@ from dataclasses import dataclass, field
 from .base import BasicModel
 
 
-__version__ = '0.0.7a'
+__version__ = '0.0.7b1'
 
 __seed__: int | None = None
