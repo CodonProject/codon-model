@@ -13,6 +13,15 @@ from .hog import apply_hog, preprocess_hog_pytorch
 from .hough import apply_hough, preprocess_hough_pytorch, hough_lines_to_endpoints
 from .sift import apply_sift, build_pyramids_pytorch
 from .slic import apply_slic, find_boundaries, preprocess_slic_pytorch
+from .matching import (
+    preprocess_shape_matching_pytorch,
+    extract_template_shape_features,
+    apply_shape_matching,
+    draw_part_smooth,
+    draw_shape_matches_lines,
+    compute_template_matching_map,
+    apply_template_matching,
+)
 
 __all__ = [
     'apply_canny',
@@ -31,4 +40,11 @@ __all__ = [
     'apply_slic',
     'find_boundaries',
     'preprocess_slic_pytorch',
+    'preprocess_shape_matching_pytorch',
+    'extract_template_shape_features',
+    'apply_shape_matching',
+    'draw_part_smooth',
+    'draw_shape_matches_lines',
+    'compute_template_matching_map',
+    'apply_template_matching',
 ]

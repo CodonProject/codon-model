@@ -30,8 +30,10 @@ from .cv import (
     apply_hog,
     apply_hough,
     apply_lsd,
+    apply_shape_matching,
     apply_sift,
     apply_slic,
+    apply_template_matching,
 )
 from .clustering import (
     apply_dbscan,
@@ -80,8 +82,10 @@ __all__ = [
     'apply_hog',
     'apply_hough',
     'apply_lsd',
+    'apply_shape_matching',
     'apply_sift',
     'apply_slic',
+    'apply_template_matching',
     # clustering
     'apply_dbscan',
     'apply_kmeans',
