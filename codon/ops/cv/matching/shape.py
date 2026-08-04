@@ -535,7 +535,7 @@ def draw_shape_matches_lines(
 
         # 3. Draw center marker & match score
         ax.plot(cx, cy, 'ro', markersize=4)
-        ax.text(cx - 20, cy - 25, f"{score:.3f}", color='red', fontsize=13, weight='bold')
+        ax.text(cx - 20, cy - 25, f"{score:.3f}", color='blue', fontsize=13, weight='bold')
 
 
 def draw_part_smooth(
