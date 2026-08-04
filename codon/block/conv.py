@@ -567,3 +567,30 @@ class ResBasicBlock(BasicModel):
             out = self.act(out)
 
         return out
+
+
+class SEBlock(BasicModel):
+    def __init__(self, channels, reduction=16):
+        super().__init__()
+        # Squeeze
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        
+        # Excitation
+        self.fc = nn.Sequential(
+            nn.Linear(channels, channels // reduction, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(channels // reduction, channels, bias=False),
+            nn.Sigmoid()
+        )
+    
+    def forward(self, x):
+        b, c, _, _ = x.size()
+        
+        # Squeeze: (B,C,H,W) -> (B,C,1,1) -> (B,C)
+        z = self.avg_pool(x).view(b, c)
+        
+        # Excitation: (B,C) -> (B,C)
+        s = self.fc(z).view(b, c, 1, 1)
+        
+        # Scale: (B,C,H,W) * (B,C,1,1)
+        return x * s
