@@ -152,6 +152,88 @@ class LinearAttentionLayerCache(BasicLayerCache):
         return self
 
 
+class HCALayerCache(BasicLayerCache):
+    def __init__(self, fp4_storage: bool = True):
+        self.fp4_storage = fp4_storage
+        self.quantized: Optional[torch.Tensor] = None
+        self.min_val: Optional[torch.Tensor] = None
+        self.scale: Optional[torch.Tensor] = None
+        self.raw_tensor: Optional[torch.Tensor] = None
+        self._seq_blocks = 0
+
+    @property
+    def seq_length(self) -> int:
+        return self._seq_blocks
+
+    def update_raw(self, tensor_new: torch.Tensor) -> torch.Tensor:
+        if self.raw_tensor is None:
+            self.raw_tensor = tensor_new.detach()
+        else:
+            if self.raw_tensor.device != tensor_new.device:
+                self.to(tensor_new.device)
+            self.raw_tensor = torch.cat([self.raw_tensor, tensor_new], dim=1)
+        self._seq_blocks = self.raw_tensor.shape[1]
+        return self.raw_tensor
+
+    def update_fp4(self, quantized: torch.Tensor, min_val: torch.Tensor, scale: torch.Tensor, num_blocks: int):
+        if self.quantized is None:
+            self.quantized = quantized.detach()
+            self.min_val = min_val.detach()
+            self.scale = scale.detach()
+        else:
+            if self.quantized.device != quantized.device:
+                self.to(quantized.device)
+            # quantized: [B, num_blocks, D]
+            # min_val & scale: [B, num_blocks, 1]
+            self.quantized = torch.cat([self.quantized, quantized], dim=1)
+            self.min_val = torch.cat([self.min_val, min_val], dim=1)
+            self.scale = torch.cat([self.scale, scale], dim=1)
+        self._seq_blocks = self.quantized.shape[1]
+        return self.quantized, self.min_val, self.scale
+
+    def reset(self):
+        self.quantized = None
+        self.min_val = None
+        self.scale = None
+        self.raw_tensor = None
+        self._seq_blocks = 0
+
+    def to(self, device: torch.device, dtype: Optional[torch.dtype] = None) -> 'HCALayerCache':
+        if self.quantized is not None:
+            self.quantized = self.quantized.to(device=device)
+            self.min_val = self.min_val.to(device=device, dtype=dtype)
+            self.scale = self.scale.to(device=device, dtype=dtype)
+        if self.raw_tensor is not None:
+            self.raw_tensor = self.raw_tensor.to(device=device, dtype=dtype)
+        return self
+
+    
+class CSALayerCache(BasicLayerCache):
+    def __init__(self):
+        self.kv_blocks: Optional[torch.Tensor] = None
+
+    @property
+    def seq_length(self) -> int:
+        return self.kv_blocks.shape[1] if self.kv_blocks is not None else 0
+    
+    def update(self, new_kv_blocks: torch.Tensor) -> torch.Tensor:
+        if self.kv_blocks is None:
+            self.kv_blocks = new_kv_blocks.detach()
+        else:
+            if self.kv_blocks.device != new_kv_blocks.device:
+                self.to(new_kv_blocks.device)
+            self.kv_blocks = torch.cat([self.kv_blocks, new_kv_blocks], dim=1)
+        return self.kv_blocks
+    
+    def reset(self):
+        self.kv_blocks = None
+
+    def to(self, device: torch.device, dtype: Optional[torch.dtype] = None) -> 'CSALayerCache':
+        if self.kv_blocks is not None:
+            self.kv_blocks = self.kv_blocks.to(device=device, dtype=dtype)
+        return self
+
+
 class ModelCache:
     def __init__(self):
         self.layer_caches: Dict[int, BasicLayerCache] = {}
@@ -208,11 +290,14 @@ def build_cache(layer: object) -> BasicLayerCache:
         
     if string_has(class_name, ['KEV']):
         return TensorLayerCache(concat_dim=2)
-        
+    
     if string_has(class_name, ['Attention']):
-        if hasattr(layer, 'kv_lora_rank') and layer.kv_lora_rank > 0:
+        if getattr(layer, 'use_hca', False):
+            return HCALayerCache(fp4_storage=getattr(layer, 'hca_fp4_storage', True))
+        if getattr(layer, 'use_csa', False):
+            return CSALayerCache()
+        if getattr(layer, 'kv_lora_rank', 0) > 0:
             return TensorLayerCache(concat_dim=1)
-        else:
-            return KVLayerCache()
+        return KVLayerCache()
             
     raise NotImplementedError(f'No cache mapping found for class: {class_name}')
