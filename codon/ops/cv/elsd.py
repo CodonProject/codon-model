@@ -1,21 +1,6 @@
 from codon import *
+from codon.ops import compute_image_gradients, angle_diff
 
-
-def _gaussian_kernel(kernel_size: int = 5, sigma: float = 0.8) -> torch.Tensor:
-    '''
-    Generate a 2D Gaussian kernel.
-
-    Args:
-        kernel_size (int): Size of the Gaussian kernel.
-        sigma (float): Standard deviation of the Gaussian distribution.
-
-    Returns:
-        torch.Tensor: Normalized 2D Gaussian kernel of shape (1, 1, kernel_size, kernel_size).
-    '''
-    x = torch.arange(kernel_size) - kernel_size // 2
-    grid = x.repeat(kernel_size, 1)
-    kernel = torch.exp(-(grid**2 + grid.T**2) / (2 * sigma**2))
-    return (kernel / kernel.sum()).unsqueeze(0).unsqueeze(0)
 
 def preprocess_image_pytorch(
     img_tensor: torch.Tensor,
@@ -34,31 +19,12 @@ def preprocess_image_pytorch(
             - Gradient angle array.
             - Sorted gradient magnitude indices in descending order.
     '''
-    if img_tensor.dim() == 2:
-        img_tensor = img_tensor.unsqueeze(0).unsqueeze(0)
-    elif img_tensor.dim() == 3:
-        img_tensor = img_tensor.unsqueeze(0)
-        
-    img_tensor = img_tensor.to(device).float()
-    
-    kernel = _gaussian_kernel(kernel_size=5, sigma=0.8).to(device)
-    img_blur = F.conv2d(img_tensor, kernel, padding=2)
-    
-    sobel_x = torch.tensor([[-1., 0., 1.], [-2., 0., 2.], [-1., 0., 1.]], device=device).view(1, 1, 3, 3)
-    sobel_y = torch.tensor([[-1., -2., -1.], [0., 0., 0.], [1., 2., 1.]], device=device).view(1, 1, 3, 3)
-    
-    gx = F.conv2d(img_blur, sobel_x, padding=1).squeeze()
-    gy = F.conv2d(img_blur, sobel_y, padding=1).squeeze()
-    
-    magnitude = torch.sqrt(gx**2 + gy**2)
-    angles = torch.atan2(gy, gx)
-    
-    flat_mag = magnitude.view(-1)
+    mag, _, _, angles = compute_image_gradients(img_tensor, blur_sigma=0.8, kernel_size=5, device=device)
+  
+    flat_mag = mag.view(-1)
     sorted_indices = torch.argsort(flat_mag, descending=True)
-    
-    return (magnitude.cpu().numpy(), 
-            angles.cpu().numpy(), 
-            sorted_indices.cpu().numpy())
+  
+    return mag.cpu().numpy(), angles.cpu().numpy(), sorted_indices.cpu().numpy()
 
 @numba.jit(nopython=True, fastmath=True)
 def _angle_diff(a1: float, a2: float) -> float:
@@ -130,7 +96,7 @@ def _grow_region(
             nx, ny = cx + dx[i], cy + dy[i]
             if 0 <= nx < W and 0 <= ny < H:
                 if not used[ny, nx]:
-                    if _angle_diff(angles[ny, nx], mean_angle) < ang_thresh:
+                    if angle_diff(angles[ny, nx], mean_angle) < ang_thresh:
                         used[ny, nx] = True
                         region_x.append(nx)
                         region_y.append(ny)

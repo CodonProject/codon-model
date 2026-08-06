@@ -4,7 +4,7 @@ from codon.block import (
     BasicEmbedding, TransformerDecoderOutput,
     RotaryEmbedding
 )
-from codon.motif.base import CausalLanguageModelOutput, CausalLanguageModel
+from codon.model.types.language import CausalLanguageModelOutput, CausalLanguageModel
 from codon.exp.block.attn_film import MultiHeadAttentionFiLM
 
 

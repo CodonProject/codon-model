@@ -6,7 +6,6 @@ sys.path.insert(0, project_root)
 
 import time
 import torch
-import torch.nn as nn
 
 from codon.block.attention import MultiHeadAttention
 from codon.model.cache import build_cache

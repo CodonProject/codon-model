@@ -1,4 +1,5 @@
 from codon import *
+from codon.ops.math_ops import l2_hys_normalize
 
 
 def preprocess_hog_pytorch(
@@ -125,17 +126,10 @@ def _normalize_blocks(
     for by in range(n_blocks_y):
         for bx in range(n_blocks_x):
             block_vec = histograms[by : by + block_h, bx : bx + block_w, :].ravel()
-            
-            norm_factor = np.sqrt(np.sum(block_vec**2) + eps**2)
-            block_vec = block_vec / norm_factor
-            
-            block_vec = np.minimum(block_vec, 0.2)
-            norm_factor2 = np.sqrt(np.sum(block_vec**2) + eps**2)
-            block_vec = block_vec / norm_factor2
-
-            blocks[by, bx, :] = block_vec
+            blocks[by, bx, :] = l2_hys_normalize(block_vec, eps=eps, max_val=0.2)
 
     return blocks.ravel()
+
 
 def _visualize_hog(
     histograms: np.ndarray,

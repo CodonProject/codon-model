@@ -1,48 +1,5 @@
 from codon import *
-
-
-def _rgb_to_lab_pytorch(img_tensor: torch.Tensor) -> torch.Tensor:
-    '''
-    Convert an RGB or sRGB image tensor to CIELAB color space using PyTorch.
-
-    Args:
-        img_tensor (torch.Tensor): Image tensor of shape (3, H, W) or (1, 3, H, W).
-
-    Returns:
-        torch.Tensor: CIELAB image tensor of shape (3, H, W).
-    '''
-    if img_tensor.max() > 1.0:
-        img_tensor = img_tensor / 255.0
-
-    if img_tensor.dim() == 3:
-        img_tensor = img_tensor.unsqueeze(0)
-
-    mask = img_tensor > 0.04045
-    rgb_lin = torch.where(mask, ((img_tensor + 0.055) / 1.055) ** 2.4, img_tensor / 12.92)
-
-    M = torch.tensor([
-        [0.4124564, 0.3575761, 0.1804375],
-        [0.2126729, 0.7151522, 0.0721750],
-        [0.0193339, 0.1191920, 0.9503041]
-    ], device=img_tensor.device, dtype=img_tensor.dtype)
-
-    rgb_perm = rgb_lin.permute(0, 2, 3, 1)
-    xyz = torch.matmul(rgb_perm, M.T)
-
-    xyz_ref = torch.tensor([0.95047, 1.00000, 1.08883], device=img_tensor.device)
-    xyz_normalized = xyz / xyz_ref
-
-    delta = 6.0 / 29.0
-    mask_xyz = xyz_normalized > (delta ** 3)
-    f_xyz = torch.where(mask_xyz, torch.pow(torch.clamp(xyz_normalized, min=1e-8), 1.0 / 3.0),
-                        (xyz_normalized / (3 * delta ** 2)) + (4.0 / 29.0))
-
-    L = 116.0 * f_xyz[..., 1:2] - 16.0
-    a = 500.0 * (f_xyz[..., 0:1] - f_xyz[..., 1:2])
-    b = 200.0 * (f_xyz[..., 1:2] - f_xyz[..., 2:3])
-
-    lab = torch.cat([L, a, b], dim=-1).squeeze(0).permute(2, 0, 1)
-    return lab
+from codon.ops import prepare_input_tensor, rgb_to_lab
 
 def preprocess_slic_pytorch(
     img_tensor: torch.Tensor,
@@ -58,14 +15,11 @@ def preprocess_slic_pytorch(
     Returns:
         Tuple[np.ndarray, np.ndarray]: LAB image array and gradient map.
     '''
-    if img_tensor.dim() == 2:
-        img_tensor = img_tensor.unsqueeze(0).repeat(3, 1, 1)
-    elif img_tensor.dim() == 3 and img_tensor.shape[0] == 1:
-        img_tensor = img_tensor.repeat(3, 1, 1)
+    img_tensor = prepare_input_tensor(img_tensor, device=device)
+    if img_tensor.shape[1] == 1:
+        img_tensor = img_tensor.repeat(1, 3, 1, 1)
 
-    img_tensor = img_tensor.to(device).float()
-    
-    lab_tensor = _rgb_to_lab_pytorch(img_tensor)
+    lab_tensor = rgb_to_lab(img_tensor, device=device)
 
     L_chan = lab_tensor[0:1].unsqueeze(0)
     sobel_x = torch.tensor([[[-1., 0., 1.], [-2., 0., 2.], [-1., 0., 1.]]], device=device).view(1, 1, 3, 3)

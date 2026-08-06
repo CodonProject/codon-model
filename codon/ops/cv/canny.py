@@ -1,21 +1,6 @@
 from codon import *
+from codon.ops import compute_image_gradients
 
-
-def _gaussian_kernel(kernel_size: int = 5, sigma: float = 1.4) -> torch.Tensor:
-    '''
-    Generate a 2D Gaussian kernel.
-
-    Args:
-        kernel_size (int): Size of the Gaussian kernel.
-        sigma (float): Standard deviation of the Gaussian distribution.
-
-    Returns:
-        torch.Tensor: Normalized 2D Gaussian kernel of shape (1, 1, kernel_size, kernel_size).
-    '''
-    x = torch.arange(kernel_size) - kernel_size // 2
-    grid = x.repeat(kernel_size, 1)
-    kernel = torch.exp(-(grid**2 + grid.T**2) / (2 * sigma**2))
-    return (kernel / kernel.sum()).unsqueeze(0).unsqueeze(0)
 
 def preprocess_canny_pytorch(
     img_tensor: torch.Tensor,
@@ -37,27 +22,10 @@ def preprocess_canny_pytorch(
     Returns:
         Tuple[np.ndarray, np.ndarray]: Gradient magnitude and angles as NumPy arrays.
     '''
-    if img_tensor.dim() == 2:
-        img_tensor = img_tensor.unsqueeze(0).unsqueeze(0)
-    elif img_tensor.dim() == 3:
-        img_tensor = img_tensor.unsqueeze(0)
-        
-    img_tensor = img_tensor.to(device).float()
-    
-    pad = kernel_size // 2
-    kernel = _gaussian_kernel(kernel_size=kernel_size, sigma=sigma).to(device)
-    img_blur = F.conv2d(img_tensor, kernel, padding=pad)
-    
-    sobel_x = torch.tensor([[-1., 0., 1.], [-2., 0., 2.], [-1., 0., 1.]], device=device).view(1, 1, 3, 3)
-    sobel_y = torch.tensor([[-1., -2., -1.], [0., 0., 0.], [1., 2., 1.]], device=device).view(1, 1, 3, 3)
-    
-    gx = F.conv2d(img_blur, sobel_x, padding=1).squeeze()
-    gy = F.conv2d(img_blur, sobel_y, padding=1).squeeze()
-    
-    magnitude = torch.sqrt(gx**2 + gy**2)
-    angles = torch.atan2(gy, gx)
-    
-    return magnitude.cpu().numpy(), angles.cpu().numpy()
+    magnitude, _, _, angle = compute_image_gradients(
+        img_tensor, blur_sigma=sigma, kernel_size=kernel_size, device=device
+    )
+    return magnitude.cpu().numpy(), angle.cpu().numpy()
 
 @numba.jit(nopython=True, fastmath=True)
 def _non_max_suppression(mag: np.ndarray, angle: np.ndarray) -> np.ndarray:

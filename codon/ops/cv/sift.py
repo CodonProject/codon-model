@@ -1,31 +1,6 @@
 from codon import *
+from codon.ops import gaussian_blur_2d, solve_3x3, l2_hys_normalize
 
-
-def _gaussian_blur_2d(img_tensor: torch.Tensor, sigma: float) -> torch.Tensor:
-    '''
-    Apply separable 2D Gaussian blur on a PyTorch image tensor.
-
-    Args:
-        img_tensor (torch.Tensor): Input image tensor of shape (B, C, H, W).
-        sigma (float): Standard deviation of the Gaussian filter.
-
-    Returns:
-        torch.Tensor: Blurred image tensor.
-    '''
-    radius = int(np.ceil(3.0 * sigma))
-    kernel_size = 2 * radius + 1
-    x = torch.arange(kernel_size, device=img_tensor.device) - radius
-    kernel_1d = torch.exp(-x**2 / (2.0 * sigma**2))
-    kernel_1d = kernel_1d / kernel_1d.sum()
-
-    k_x = kernel_1d.view(1, 1, 1, -1)
-    k_y = kernel_1d.view(1, 1, -1, 1)
-
-    pad = radius
-    out = F.pad(img_tensor, (pad, pad, pad, pad), mode='reflect')
-    out = F.conv2d(out, k_x)
-    out = F.conv2d(out, k_y)
-    return out
 
 def build_pyramids_pytorch(
     img_tensor: torch.Tensor,
@@ -70,12 +45,12 @@ def build_pyramids_pytorch(
         
         for i in range(n_scales + 3):
             if i == 0 and octave == 0:
-                blurred = _gaussian_blur_2d(curr_img, sigmas[0])
+                blurred = gaussian_blur_2d(curr_img, sigma=sigmas[0], kernel_size=int(np.ceil(3.0 * sigmas[0])) * 2 + 1)
             elif i == 0:
                 blurred = curr_img
             else:
                 sigma_diff = np.sqrt(sigmas[i]**2 - sigmas[i-1]**2)
-                blurred = _gaussian_blur_2d(octave_gaussians[-1], sigma_diff)
+                blurred = gaussian_blur_2d(octave_gaussians[-1], sigma=sigma_diff, kernel_size=int(np.ceil(3.0 * sigma_diff)) * 2 + 1)
             
             octave_gaussians.append(blurred)
 
@@ -92,48 +67,6 @@ def build_pyramids_pytorch(
 
     return gaussian_pyramid, dog_pyramid
 
-@numba.jit(nopython=True, fastmath=True)
-def _solve_3x3(A: np.ndarray, b: np.ndarray) -> Tuple[np.ndarray, bool]:
-    '''
-    Solve linear system A x = b for a 3x3 matrix using Cramer's rule.
-
-    Args:
-        A (np.ndarray): 3x3 coefficient matrix.
-        b (np.ndarray): 3D vector.
-
-    Returns:
-        Tuple[np.ndarray, bool]: Solution vector x and success flag.
-    '''
-    a00, a01, a02 = A[0, 0], A[0, 1], A[0, 2]
-    a10, a11, a12 = A[1, 0], A[1, 1], A[1, 2]
-    a20, a21, a22 = A[2, 0], A[2, 1], A[2, 2]
-    b0, b1, b2    = b[0],    b[1],    b[2]
-
-    detA = (a00 * (a11 * a22 - a12 * a21) - 
-            a01 * (a10 * a22 - a12 * a20) + 
-            a02 * (a10 * a21 - a11 * a20))
-
-    if abs(detA) < 1e-10:
-        return np.zeros(3, dtype=np.float32), False
-
-    detX = (b0  * (a11 * a22 - a12 * a21) - 
-            a01 * (b1  * a22 - a12 * b2)  + 
-            a02 * (b1  * a21 - a11 * b2))
-
-    detY = (a00 * (b1  * a22 - a12 * b2)  - 
-            b0  * (a10 * a22 - a12 * a20) + 
-            a02 * (a10 * b2  - b1  * a20))
-
-    detZ = (a00 * (a11 * b2  - b1  * a21) - 
-            a01 * (a10 * b2  - b1  * a20) + 
-            b0  * (a10 * a21 - a11 * a20))
-
-    x0 = detX / detA
-    x1 = detY / detA
-    x2 = detZ / detA
-
-    res = np.array([x0, x1, x2], dtype=np.float32)
-    return res, True
 
 @numba.jit(nopython=True, fastmath=True)
 def _refine_keypoint(
@@ -188,7 +121,7 @@ def _refine_keypoint(
             [dxs, dys, dss]
         ], dtype=np.float32)
 
-        offset, ok = _solve_3x3(H, J)
+        offset, ok = solve_3x3(H, J)
         if not ok:
             return False, 0.0, 0.0, 0.0, 0.0
 
@@ -209,6 +142,7 @@ def _refine_keypoint(
         return False, 0.0, 0.0, 0.0, 0.0
 
     return True, x + offset[0], y + offset[1], s + offset[2], contrast
+
 
 @numba.jit(nopython=True, fastmath=True)
 def _assign_orientation(
@@ -270,6 +204,7 @@ def _assign_orientation(
             orientations.append(angle)
 
     return orientations
+
 
 @numba.jit(nopython=True, fastmath=True)
 def _compute_sift_descriptor(
@@ -349,17 +284,8 @@ def _compute_sift_descriptor(
                                         
                                         descriptor[r_idx, c_idx, o_idx] += w * wr * wc * wo
 
-    vec = descriptor.ravel()
+    return l2_hys_normalize(descriptor.ravel(), eps=1e-7, max_val=0.2)
 
-    norm = np.sqrt(np.sum(vec**2)) + 1e-7
-    vec /= norm
-
-    vec = np.minimum(vec, 0.2)
-
-    norm = np.sqrt(np.sum(vec**2)) + 1e-7
-    vec /= norm
-
-    return vec
 
 def apply_sift(
     image: Union[np.ndarray, torch.Tensor],

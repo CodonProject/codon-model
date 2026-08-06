@@ -1,23 +1,5 @@
 from codon import *
-
-
-def _gaussian_blur(img_tensor: torch.Tensor, sigma: float = 1.0) -> torch.Tensor:
-    '''
-    Apply 2D Gaussian blur to the input image tensor.
-
-    Args:
-        img_tensor (torch.Tensor): Input image tensor of shape (1, 1, H, W).
-        sigma (float): Standard deviation of the Gaussian distribution.
-
-    Returns:
-        torch.Tensor: Blurred image tensor of shape (1, 1, H, W).
-    '''
-    kernel_size = 5
-    x = torch.arange(kernel_size, device=img_tensor.device) - kernel_size // 2
-    grid = x.repeat(kernel_size, 1)
-    kernel = torch.exp(-(grid**2 + grid.T**2) / (2 * sigma**2))
-    kernel = (kernel / kernel.sum()).view(1, 1, kernel_size, kernel_size)
-    return F.conv2d(img_tensor, kernel, padding=kernel_size//2)
+from codon.ops import compute_image_gradients
 
 
 def preprocess_shape_matching_pytorch(
@@ -39,32 +21,15 @@ def preprocess_shape_matching_pytorch(
             - gx_norm (np.ndarray): Normalized horizontal gradient array of shape (H, W).
             - gy_norm (np.ndarray): Normalized vertical gradient array of shape (H, W).
     '''
-    if img_tensor.dim() == 2:
-        img_tensor = img_tensor.unsqueeze(0).unsqueeze(0)
-    elif img_tensor.dim() == 3:
-        if img_tensor.shape[2] in [1, 3]:
-            img_tensor = img_tensor.permute(2, 0, 1)
-        img_tensor = img_tensor.unsqueeze(0)
+    mag_tensor, gx_tensor, gy_tensor, _ = compute_image_gradients(
+        img_tensor, blur_sigma=0.8, kernel_size=5, device=device
+    )
 
-    img_tensor = img_tensor.to(device).float()
-    if img_tensor.shape[1] == 3:
-        img_tensor = 0.299 * img_tensor[:, 0:1] + 0.587 * img_tensor[:, 1:2] + 0.114 * img_tensor[:, 2:3]
+    mag_clamp = torch.clamp(mag_tensor, min=1e-5)
+    gx_norm = gx_tensor / mag_clamp
+    gy_norm = gy_tensor / mag_clamp
 
-    img_blur = _gaussian_blur(img_tensor, sigma=0.8)
-
-    sobel_x = torch.tensor([[-1., 0., 1.], [-2., 0., 2.], [-1., 0., 1.]], device=device).view(1, 1, 3, 3)
-    sobel_y = torch.tensor([[-1., -2., -1.], [0., 0., 0.], [1., 2., 1.]], device=device).view(1, 1, 3, 3)
-
-    gx = F.conv2d(img_blur, sobel_x, padding=1).squeeze()
-    gy = F.conv2d(img_blur, sobel_y, padding=1).squeeze()
-
-    mag = torch.sqrt(gx**2 + gy**2)
-
-    mag_clamp = torch.clamp(mag, min=1e-5)
-    gx_norm = gx / mag_clamp
-    gy_norm = gy / mag_clamp
-
-    return (mag.cpu().numpy(),
+    return (mag_tensor.cpu().numpy(),
             gx_norm.cpu().numpy(),
             gy_norm.cpu().numpy())
 
