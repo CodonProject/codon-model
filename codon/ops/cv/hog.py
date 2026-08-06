@@ -1,5 +1,5 @@
 from codon import *
-from codon.ops.math_ops import l2_hys_normalize
+from codon.ops.math import l2_hys_normalize
 
 
 def preprocess_hog_pytorch(

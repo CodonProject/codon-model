@@ -2,7 +2,7 @@ from .tensor_utils import prepare_input_tensor
 from .filters import gaussian_blur_2d, compute_image_gradients, get_gaussian_kernel_2d
 from .color import rgb_to_gray, rgb_to_lab
 from .nms import nms_2d_suppression, nms_2d_peaks
-from .math_ops import angle_diff, solve_3x3, l2_hys_normalize
+from .math import angle_diff, solve_3x3, l2_hys_normalize
 
 from .attention import AttentionOutput, apply_attention
 from .bio import (
