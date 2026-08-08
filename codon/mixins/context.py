@@ -12,6 +12,12 @@ class ExecutionContextMixin:
         if was_training: self.train()
 
     @contextlib.contextmanager
+    def disable_lora(self) -> Iterator[None]:
+        from codon.utils.lora import disable_lora
+        with disable_lora(self):
+            yield
+
+    @contextlib.contextmanager
     def autocast(self, enabled: bool = True, dtype: torch.dtype = torch.float16, is_accumulation_step: bool = False) -> Iterator[None]:
         device = getattr(self, 'device', None)
         if device is None:

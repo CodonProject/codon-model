@@ -3,14 +3,21 @@ class SnapshotMixin:
         super().__init__()
         self._snapshots = {}
 
-    def snapshot(self, name: str = 'default', device: str = 'cpu') -> None:
-        self._snapshots[name] = {k: v.detach().clone().to(device=device) for k, v in self.state_dict().items()}
+    def snapshot(self, name: str = 'default', device: str = 'cpu', lora_only: bool = False) -> None:
+        if lora_only:
+            from codon.utils.lora import get_lora_state_dict
+            s_dict = get_lora_state_dict(self)
+        else:
+            s_dict = self.state_dict()
 
-    def restore_snapshot(self, name: str = 'default', strict: bool = True) -> None:
+        self._snapshots[name] = {k: v.detach().clone().to(device=device) for k, v in s_dict.items()}
+
+    def restore_snapshot(self, name: str = 'default', strict: bool = False) -> None:
         if name not in self._snapshots: raise KeyError(f"No snapshot found with name '{name}'")
         
         target_device = getattr(self, 'device', 'cpu')
-        self.load_state_dict({k: v.to(device=target_device) for k, v in self._snapshots[name].items()}, strict=strict)
+        loaded_dict = {k: v.to(device=target_device) for k, v in self._snapshots[name].items()}
+        self.load_state_dict(loaded_dict, strict=strict)
 
     def clear_snapshots(self) -> None:
         if hasattr(self, '_snapshots'): self._snapshots.clear()

@@ -12,15 +12,40 @@ class ParameterMixin:
     def all_params(self) -> Iterator[torch.nn.Parameter]:
         return self.get_params()
 
-    def get_params(self, trainable_only: bool = False) -> Iterator[torch.nn.Parameter]:
-        return (p for p in self.parameters() if p.requires_grad) if trainable_only else self.parameters()
+    @property
+    def lora_params(self) -> Iterator[torch.nn.Parameter]:
+        return self.get_params(lora_only=True)
+
+    @property
+    def backbone_params(self) -> Iterator[torch.nn.Parameter]:
+        for name, param in self.named_parameters():
+            if not any(kw in name for kw in ['lora_', 'dora_']) or 'original_layer' in name:
+                yield param
+
+    def get_params(self, trainable_only: bool = False, lora_only: bool = False) -> Iterator[torch.nn.Parameter]:
+        for name, p in self.named_parameters():
+            if trainable_only and not p.requires_grad:
+                continue
+            if lora_only:
+                is_lora = any(kw in name for kw in ['lora_', 'dora_']) and 'original_layer' not in name
+                if not is_lora:
+                    continue
+            yield p
     
-    def count_params(self, trainable_only: bool = False, active_only: bool = False, human_readable: bool = False, seen: set = None) -> Union[int, str]:
+    def count_params(
+        self, 
+        trainable_only: bool = False, 
+        active_only: bool = False, 
+        lora_only: bool = False, 
+        human_readable: bool = False, 
+        seen: set = None
+    ) -> Union[int, str]:
         if seen is None: seen = set()
+        
         if not active_only:
-            total = sum(p.numel() for p in self.get_params(trainable_only) if p not in seen and not seen.add(p))
+            total = sum(p.numel() for p in self.get_params(trainable_only, lora_only) if p not in seen and not seen.add(p))
         else:
-            total = self._count_params_recursive(self, trainable_only, active_only, seen)
+            total = self._count_params_recursive(self, trainable_only, active_only, lora_only, seen)
         
         if human_readable:
             if total >= 1e9: return f'{total / 1e9:.2f}B'
@@ -30,14 +55,28 @@ class ParameterMixin:
         return total
 
     @staticmethod
-    def _count_params_recursive(module: nn.Module, trainable_only: bool, active_only: bool, seen: set) -> int:
+    def _count_params_recursive(module: nn.Module, trainable_only: bool, active_only: bool, lora_only: bool, seen: set) -> int:
         total = 0
-        for p in module.parameters(recurse=False):
-            if p not in seen and (not trainable_only or p.requires_grad):
-                seen.add(p); total += p.numel()
+        for name, p in module.named_parameters(recurse=False):
+            if p not in seen:
+                if trainable_only and not p.requires_grad:
+                    continue
+                if lora_only:
+                    is_lora = any(kw in name for kw in ['lora_', 'dora_']) and 'original_layer' not in name
+                    if not is_lora:
+                        continue
+                        
+                seen.add(p)
+                total += p.numel()
+                
         for child in module.children():
             if hasattr(child, 'count_params'):
-                total += child.count_params(trainable_only, active_only, seen=seen)
+                total += child.count_params(
+                    trainable_only=trainable_only, 
+                    active_only=active_only, 
+                    lora_only=lora_only, 
+                    seen=seen
+                )
             else:
-                total += ParameterMixin._count_params_recursive(child, trainable_only, active_only, seen)
+                total += ParameterMixin._count_params_recursive(child, trainable_only, active_only, lora_only, seen)
         return total

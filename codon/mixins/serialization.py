@@ -24,9 +24,37 @@ class SerializationMixin:
         clean_state_dict = {k.replace('_orig_mod.', ''): v for k, v in state_dict.items()}
         self.load_state_dict(clean_state_dict, strict=strict)
         return self
+
+    def load_lora(self: TModule, path: str, auto_inject: bool = True, merge: bool = False, **kwargs) -> TModule:
+        from codon.utils.lora import inject_from_file
+        if auto_inject:
+            inject_from_file(self, path, merge_weights=merge, **kwargs)
+        else:
+            self.load(path, strict=False)
+            if merge:
+                for m in self.modules():
+                    if hasattr(m, 'merge'): m.merge()
+        return self
+
+    def save_lora(self: TModule, path: str) -> TModule:
+        from codon.utils.lora import save_lora
+        save_lora(self, path)
+        return self
     
-    def save(self: TModule, path: str, trainable_only: bool = False, include_buffer: bool = True, 
-                        exclude_modules: list[Union[type, nn.Module]] = None, only: list[str] = None, exclude: list[str] = None) -> TModule:
+    def save(
+        self: TModule, 
+        path: str, 
+        trainable_only: bool = False, 
+        lora_only: bool = False,
+        include_buffer: bool = True, 
+        exclude_modules: list[Union[type, nn.Module]] = None, 
+        only: list[str] = None, 
+        exclude: list[str] = None
+    ) -> TModule:
+        
+        if lora_only:
+            return self.save_lora(path)
+
         state_dict = self.state_dict()
         is_modified = False
         exclude_prefixes = []
@@ -38,6 +66,9 @@ class SerializationMixin:
                 if module in exclude_instances or (exclude_types and isinstance(module, exclude_types)):
                     if name != '': exclude_prefixes.append(name + '.')
         exclude_prefixes = tuple(exclude_prefixes)
+
+        if exclude is None: exclude = []
+        exclude.append('weight_backup')
 
         if trainable_only or not include_buffer or exclude_prefixes or only or exclude:
             trainable_names = {name for name, p in self.named_parameters() if p.requires_grad}

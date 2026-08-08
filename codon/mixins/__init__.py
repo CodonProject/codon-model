@@ -8,11 +8,12 @@ from .device import DeviceDtypeMixin
 from .snapshot import SnapshotMixin
 from .traversal import TraversalMixin
 from .remote import RemoteResourceMixin
+from .build import BuildMixin
 
 __all__ = [
     'DiagnosticsMixin', 'ModelIssues', 'MemoryFootprint',
     'ParameterMixin', 'ExecutionContextMixin', 'TrainingUtilsMixin',
     'SerializationMixin', 'FreezeMixin', 'DeviceDtypeMixin',
     'SnapshotMixin', 'TraversalMixin',
-    'RemoteResourceMixin'
+    'RemoteResourceMixin', 'BuildMixin'
 ]

@@ -1,6 +1,5 @@
 import torch
 from typing import Union
-
 from codon.mixins._types import TModule
 
 
@@ -23,6 +22,11 @@ class DeviceDtypeMixin:
 
     def to_precision(self: TModule, dtype: torch.dtype) -> TModule:
         self.to(dtype=dtype); return self
+
+    def to_lora_precision(self: TModule, dtype: torch.dtype = torch.float32) -> TModule:
+        from codon.utils.lora import cast_lora_precision
+        cast_lora_precision(self, dtype=dtype)
+        return self
 
     def to_device(self: TModule, device: Union[str, torch.device]) -> TModule:
         self.to(device=device); return self

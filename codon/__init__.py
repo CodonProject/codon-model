@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from .base import BasicModel
 
 
-__version__ = '0.0.7b2'
+__version__ = '0.0.7b3'
 
 __seed__: int | None = None
 

@@ -6,7 +6,7 @@ from codon.mixins import (
     DiagnosticsMixin, ParameterMixin, ExecutionContextMixin, 
     TrainingUtilsMixin, SerializationMixin, FreezeMixin, 
     DeviceDtypeMixin, SnapshotMixin, TraversalMixin,
-    RemoteResourceMixin
+    RemoteResourceMixin, BuildMixin
 )
 from codon.utils.safecode import safecode as utils_safecode
 
@@ -24,7 +24,8 @@ class BasicModel(
     FreezeMixin,
     SnapshotMixin,
     TraversalMixin,
-    RemoteResourceMixin 
+    BuildMixin,
+    RemoteResourceMixin
 ):
     '''
     Base class for all models. 
