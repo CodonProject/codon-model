@@ -39,7 +39,7 @@ def install() -> None:
     '''
     print('Installing package...')
     try:
-        subprocess.run([sys.executable, '-m', 'pip', 'install', '.'], check=True)
+        subprocess.run([sys.executable, '-m', 'pip', 'install', '.', '--no-build-isolation'], check=True)
         print('Installation successful.')
     except subprocess.CalledProcessError as e:
         print(f'Installation failed with error: {e}')
