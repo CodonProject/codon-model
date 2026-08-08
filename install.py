@@ -17,6 +17,9 @@ def clean() -> None:
         if os.path.exists(dir_path):
             print(f'Removing {dir_path}...')
             shutil.rmtree(dir_path)
+    try:
+        subprocess.run(['codon', 'clear'], check=True)
+    except: pass
 
 def build() -> None:
     '''
