@@ -11,8 +11,10 @@ from codon.mixins._types import TModule
 
 class SerializationMixin:
     def load(self: TModule, path: str, strict: bool = False) -> TModule:
+        orig = getattr(self, 'original_model', self)
+        
         if path.endswith('.safetensors'):
-            safe_load_model(self, path, strict=strict)
+            safe_load_model(orig, path, strict=strict)
             return self
         
         device = getattr(self, 'device', torch.device('cpu'))
@@ -22,23 +24,26 @@ class SerializationMixin:
                 if key in state_dict: state_dict = state_dict[key]; break
         
         clean_state_dict = {k.replace('_orig_mod.', ''): v for k, v in state_dict.items()}
-        self.load_state_dict(clean_state_dict, strict=strict)
+        orig.load_state_dict(clean_state_dict, strict=strict)
         return self
 
     def load_lora(self: TModule, path: str, auto_inject: bool = True, merge: bool = False, **kwargs) -> TModule:
         from codon.utils.lora import inject_from_file
+        orig = getattr(self, 'original_model', self)
+        
         if auto_inject:
-            inject_from_file(self, path, merge_weights=merge, **kwargs)
+            inject_from_file(orig, path, merge_weights=merge, **kwargs)
         else:
-            self.load(path, strict=False)
+            orig.load(path, strict=False)
             if merge:
-                for m in self.modules():
-                    if hasattr(m, 'merge'): m.merge()
+                for m in orig.modules():
+                    module_orig = getattr(m, 'original_model', m)
+                    if hasattr(module_orig, 'merge'): module_orig.merge()
         return self
 
     def save_lora(self: TModule, path: str) -> TModule:
         from codon.utils.lora import save_lora
-        save_lora(self, path)
+        save_lora(getattr(self, 'original_model', self), path)
         return self
     
     def save(
@@ -55,15 +60,17 @@ class SerializationMixin:
         if lora_only:
             return self.save_lora(path)
 
-        state_dict = self.state_dict()
+        orig = getattr(self, 'original_model', self)
+        state_dict = orig.state_dict()
         is_modified = False
         exclude_prefixes = []
         
         if exclude_modules:
             exclude_types = tuple(t for t in exclude_modules if isinstance(t, type))
             exclude_instances = set(m for m in exclude_modules if not isinstance(m, type))
-            for name, module in self.named_modules():
-                if module in exclude_instances or (exclude_types and isinstance(module, exclude_types)):
+            for name, module in orig.named_modules():
+                module_orig = getattr(module, 'original_model', module)
+                if module_orig in exclude_instances or (exclude_types and isinstance(module_orig, exclude_types)):
                     if name != '': exclude_prefixes.append(name + '.')
         exclude_prefixes = tuple(exclude_prefixes)
 
@@ -71,8 +78,8 @@ class SerializationMixin:
         exclude.append('weight_backup')
 
         if trainable_only or not include_buffer or exclude_prefixes or only or exclude:
-            trainable_names = {name for name, p in self.named_parameters() if p.requires_grad}
-            buffer_names = {name for name, _ in self.named_buffers()}
+            trainable_names = {name for name, p in orig.named_parameters() if p.requires_grad}
+            buffer_names = {name for name, _ in orig.named_buffers()}
             filtered_dict = {}
             
             for key, tensor in state_dict.items():
@@ -90,7 +97,7 @@ class SerializationMixin:
             if is_modified: state_dict = filtered_dict
 
         if path.endswith('.safetensors'):
-            safe_save_model(self, path) if not is_modified else safe_save_file(state_dict, path)
+            safe_save_model(orig, path) if not is_modified else safe_save_file(state_dict, path)
         else:
             torch.save(state_dict, path)
         return self

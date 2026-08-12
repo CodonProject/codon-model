@@ -68,6 +68,25 @@ class BasicLoRA(BasicModel):
         self.dora_m = None
         self.register_buffer('weight_backup', None, persistent=False)
 
+    @property
+    def weight(self) -> Any:
+        '''Exposes original layer weight for external access.'''
+        return getattr(self.original_layer, 'weight', None)
+
+    @property
+    def bias(self) -> Any:
+        '''Exposes original layer bias for external access.'''
+        return getattr(self.original_layer, 'bias', None)
+
+    def __getattr__(self, name: str) -> Any:
+        '''Delegates attribute lookup to the original layer if not found.'''
+        try:
+            return super().__getattr__(name)
+        except AttributeError:
+            if '_modules' in self.__dict__ and 'original_layer' in self._modules:
+                return getattr(self._modules['original_layer'], name)
+            raise
+
     def reset_parameters(self) -> None:
         '''
         Resets LoRA parameters. Should be implemented by subclasses.

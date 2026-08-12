@@ -7,7 +7,7 @@ from codon.mixins._types import TModule
 class BuildMixin:
     def inject_lora(
         self: TModule,
-        target_modules: Union[List[str], List[Type[nn.Module]]],
+        target_modules: Union[str, Type[nn.Module], List[Union[str, Type[nn.Module]]]],
         r: int = 8,
         lora_alpha: int = 16,
         lora_dropout: float = 0.05,

@@ -6,27 +6,31 @@ from safetensors.torch import save_file, load_file
 import contextlib
 from typing import Iterator
 
+
 @contextlib.contextmanager
 def disable_lora(model: nn.Module) -> Iterator[None]:
+    orig = getattr(model, 'original_model', model)
     original_scalings = {}
     unmerged_modules = []
     
     try:
-        for name, module in model.named_modules():
-            if isinstance(module, BasicLoRA):
-                if module.merged:
-                    module.unmerge()
-                    unmerged_modules.append(module)
+        for name, module in orig.named_modules():
+            module_orig = getattr(module, 'original_model', module)
+            if isinstance(module_orig, BasicLoRA):
+                if module_orig.merged:
+                    module_orig.unmerge()
+                    unmerged_modules.append(module_orig)
                 
-                original_scalings[name] = module.scaling
-                module.scaling = 0.0
+                original_scalings[name] = module_orig.scaling
+                module_orig.scaling = 0.0
                 
         yield
         
     finally:
-        for name, module in model.named_modules():
-            if isinstance(module, BasicLoRA) and name in original_scalings:
-                module.scaling = original_scalings[name]
+        for name, module in orig.named_modules():
+            module_orig = getattr(module, 'original_model', module)
+            if isinstance(module_orig, BasicLoRA) and name in original_scalings:
+                module_orig.scaling = original_scalings[name]
                 
         for module in unmerged_modules:
             module.merge()
@@ -43,7 +47,7 @@ def _get_submodule(model: nn.Module, target_path: str) -> Tuple[nn.Module, str, 
 
 def inject(
     model: nn.Module,
-    target_modules: Union[List[str], List[Type[nn.Module]]],
+    target_modules: Union[str, Type[nn.Module], List[Union[str, Type[nn.Module]]]],
     r: int = 8,
     lora_alpha: int = 16,
     lora_dropout: float = 0.05,
@@ -52,41 +56,50 @@ def inject(
     dora: bool = False,
     gradient_checkpointing: bool = False
 ) -> nn.Module:
+    orig = getattr(model, 'original_model', model)
     targets_to_replace = []
     
-    for name, module in model.named_modules():
+    if isinstance(target_modules, (str, type)):
+        target_modules = [target_modules]
+        
+    str_targets = [t for t in target_modules if isinstance(t, str)]
+    type_targets = [t for t in target_modules if isinstance(t, type)]
+    
+    for name, module in orig.named_modules():
         if name == '': continue
         
+        module_orig = getattr(module, 'original_model', module)
         is_target = False
-        if all(isinstance(t, str) for t in target_modules):
-            if any(name.endswith(t) for t in target_modules):
-                is_target = True
-        elif all(isinstance(t, type) for t in target_modules):
-            if any(isinstance(module, t) for t in target_modules):
-                is_target = True
+        
+        if str_targets and any(name.endswith(t) or name == t for t in str_targets):
+            is_target = True
+            
+        elif type_targets and any(isinstance(module_orig, t) for t in type_targets):
+            is_target = True
                 
         if is_target:
             targets_to_replace.append(name)
 
     for target_path in targets_to_replace:
-        parent, child_name, child = _get_submodule(model, target_path)
+        parent, child_name, child = _get_submodule(orig, target_path)
+        child_orig = getattr(child, 'original_model', child)
         
         lora_wrapper = None
         kwargs = dict(
-            original_layer=child, r=r, lora_alpha=lora_alpha, lora_dropout=lora_dropout,
+            original_layer=child_orig, r=r, lora_alpha=lora_alpha, lora_dropout=lora_dropout,
             merge_weights=merge_weights, gate=gate, dora=dora, gradient_checkpointing=gradient_checkpointing
         )
         
-        if isinstance(child, nn.Linear):
+        if isinstance(child_orig, nn.Linear):
             lora_wrapper = LinearLoRA(**kwargs)
-        elif isinstance(child, nn.Conv2d):
+        elif isinstance(child_orig, nn.Conv2d):
             lora_wrapper = Conv2dLoRA(**kwargs)
-        elif isinstance(child, nn.Conv1d):
+        elif isinstance(child_orig, nn.Conv1d):
             lora_wrapper = Conv1dLoRA(**kwargs)
-        elif isinstance(child, nn.Embedding):
+        elif isinstance(child_orig, nn.Embedding):
             lora_wrapper = EmbeddingLoRA(**kwargs)
         else:
-            print(f"Warning: Skipping {target_path}, unsupported module type {type(child)}")
+            print(f"Warning: Skipping {target_path}, unsupported module type {type(child_orig)}")
             continue
             
         setattr(parent, child_name, lora_wrapper)
@@ -95,12 +108,14 @@ def inject(
 
 
 def freeze_backbone(model: nn.Module) -> nn.Module:
-    for param in model.parameters():
+    orig = getattr(model, 'original_model', model)
+    for param in orig.parameters():
         param.requires_grad = False
         
-    for module in model.modules():
-        if isinstance(module, BasicLoRA):
-            for name, param in module.named_parameters(recurse=False):
+    for module in orig.modules():
+        module_orig = getattr(module, 'original_model', module)
+        if isinstance(module_orig, BasicLoRA):
+            for name, param in module_orig.named_parameters(recurse=False):
                 if any(kw in name for kw in ['lora_', 'dora_']):
                     param.requires_grad = True
                     
@@ -108,7 +123,8 @@ def freeze_backbone(model: nn.Module) -> nn.Module:
 
 
 def save_lora(model: nn.Module, path: str) -> None:
-    state_dict = model.state_dict()
+    orig = getattr(model, 'original_model', model)
+    state_dict = orig.state_dict()
     lora_state_dict = {
         k: v for k, v in state_dict.items() 
         if ('lora_' in k or 'dora_' in k) and 'original_layer' not in k
@@ -130,6 +146,8 @@ def inject_from_file(
     merge_weights: bool = False,
     gradient_checkpointing: bool = False
 ) -> nn.Module:
+    orig = getattr(model, 'original_model', model)
+    
     if path.endswith('.safetensors'):
         state_dict = load_file(path)
     else:
@@ -161,10 +179,11 @@ def inject_from_file(
 
     for target_path, config in lora_configs.items():
         try:
-            parent, child_name, child = _get_submodule(model, target_path)
+            parent, child_name, child = _get_submodule(orig, target_path)
+            child_orig = getattr(child, 'original_model', child)
             
             kwargs = dict(
-                original_layer=child, 
+                original_layer=child_orig, 
                 r=config['r'], 
                 lora_alpha=lora_alpha, 
                 lora_dropout=lora_dropout,
@@ -174,10 +193,10 @@ def inject_from_file(
                 gradient_checkpointing=gradient_checkpointing
             )
             
-            if isinstance(child, nn.Linear): lora_wrapper = LinearLoRA(**kwargs)
-            elif isinstance(child, nn.Conv2d): lora_wrapper = Conv2dLoRA(**kwargs)
-            elif isinstance(child, nn.Conv1d): lora_wrapper = Conv1dLoRA(**kwargs)
-            elif isinstance(child, nn.Embedding): lora_wrapper = EmbeddingLoRA(**kwargs)
+            if isinstance(child_orig, nn.Linear): lora_wrapper = LinearLoRA(**kwargs)
+            elif isinstance(child_orig, nn.Conv2d): lora_wrapper = Conv2dLoRA(**kwargs)
+            elif isinstance(child_orig, nn.Conv1d): lora_wrapper = Conv1dLoRA(**kwargs)
+            elif isinstance(child_orig, nn.Embedding): lora_wrapper = EmbeddingLoRA(**kwargs)
             else: continue
             
             setattr(parent, child_name, lora_wrapper)
@@ -185,48 +204,56 @@ def inject_from_file(
         except AttributeError:
             print(f"Warning: Could not find module {target_path} in the model.")
 
-    model.load_state_dict(state_dict, strict=False)
+    orig.load_state_dict(state_dict, strict=False)
 
     if merge_weights:
-        for module in model.modules():
-            if isinstance(module, BasicLoRA):
-                module.merge()
+        for module in orig.modules():
+            module_orig = getattr(module, 'original_model', module)
+            if isinstance(module_orig, BasicLoRA):
+                module_orig.merge()
 
     return model
 
 def merge_all(model: nn.Module) -> nn.Module:
+    orig = getattr(model, 'original_model', model)
     count = 0
-    for module in model.modules():
-        if isinstance(module, BasicLoRA):
-            module.merge()
+    for module in orig.modules():
+        module_orig = getattr(module, 'original_model', module)
+        if isinstance(module_orig, BasicLoRA):
+            module_orig.merge()
             count += 1
     print(f"Successfully merged {count} LoRA modules.")
     return model
 
 def unmerge_all(model: nn.Module) -> nn.Module:
+    orig = getattr(model, 'original_model', model)
     count = 0
-    for module in model.modules():
-        if isinstance(module, BasicLoRA):
-            module.unmerge()
+    for module in orig.modules():
+        module_orig = getattr(module, 'original_model', module)
+        if isinstance(module_orig, BasicLoRA):
+            module_orig.unmerge()
             count += 1
     print(f"Successfully unmerged {count} LoRA modules.")
     return model
 
 def cast_lora_precision(model: nn.Module, dtype: torch.dtype = torch.float32) -> nn.Module:
-    for module in model.modules():
-        if isinstance(module, BasicLoRA):
-            if hasattr(module, 'lora_a') and module.lora_a is not None:
-                module.lora_a.to(dtype)
-            if hasattr(module, 'lora_b') and module.lora_b is not None:
-                module.lora_b.to(dtype)
-            if hasattr(module, 'lora_gate') and module.lora_gate is not None:
-                module.lora_gate.to(dtype)
-            if hasattr(module, 'dora_m') and module.dora_m is not None:
-                module.dora_m.to(dtype)
+    orig = getattr(model, 'original_model', model)
+    for module in orig.modules():
+        module_orig = getattr(module, 'original_model', module)
+        if isinstance(module_orig, BasicLoRA):
+            if hasattr(module_orig, 'lora_a') and module_orig.lora_a is not None:
+                module_orig.lora_a.to(dtype)
+            if hasattr(module_orig, 'lora_b') and module_orig.lora_b is not None:
+                module_orig.lora_b.to(dtype)
+            if hasattr(module_orig, 'lora_gate') and module_orig.lora_gate is not None:
+                module_orig.lora_gate.to(dtype)
+            if hasattr(module_orig, 'dora_m') and module_orig.dora_m is not None:
+                module_orig.dora_m.to(dtype)
     return model
 
 def get_lora_state_dict(model: nn.Module) -> Dict[str, torch.Tensor]:
-    state_dict = model.state_dict
+    orig = getattr(model, 'original_model', model)
+    state_dict = orig.state_dict()  # 修复了缺少圆括号的 Bug
     lora_state_dict = {
         k: v for k, v in state_dict.items() 
         if any(kw in k for kw in ['lora_', 'dora_']) 
