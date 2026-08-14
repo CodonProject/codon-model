@@ -18,6 +18,12 @@ from dataclasses import dataclass, field
 
 from .base import BasicModel, BasicLoss, BasicOptimizer
 
+import os
+import sys
+
+os.environ['PYTHONIOENCODING'] = 'utf-8'
+sys.stdout.reconfigure(encoding='utf-8')
+
 
 __version__ = '0.0.7b4'
 

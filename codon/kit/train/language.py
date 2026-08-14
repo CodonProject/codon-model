@@ -3,9 +3,10 @@ import torch
 from codon.utils.session import Session
 from codon.utils.tokens  import PackedTokenizer
 
+from tqdm import tqdm
 
-def run_sanity_check(model_instance, tokenizer, device, eos_id, step, prompt_text='The'):
-    print(f'\n[*] Interface (Step {step})...')
+def run_sanity_check(model_instance, tokenizer, device, eos_id, step, prompt_text='The') -> str:
+    tqdm.write(f'\n[*] Interface (Step {step})...')
     model_instance.eval()
     with torch.no_grad():
         try:
@@ -27,11 +28,13 @@ def run_sanity_check(model_instance, tokenizer, device, eos_id, step, prompt_tex
             generated_text = tokenizer.fast_tokenizer.decode(
                 generated_ids[0].cpu().numpy().tolist()
             )
-            print(f'[*] Output: {generated_text}\n')
+            tqdm.write(f'[*] Output: {generated_text}\n')
         except Exception as e:
-            print(f'[!] Failed: {e}\n')
+            tqdm.write(f'[!] Failed: {e}\n')
         finally:
             model_instance.train()
+
+        return generated_text
 
 
 def run_chat_turn(

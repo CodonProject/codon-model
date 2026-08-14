@@ -206,10 +206,10 @@ class PackedTokenizer(RemoteResourceMixin):
         
         return [tid for tid in raw if tid != escape_id]
 
-    def encode(self, text: str, add_special_tokens: bool = False, **kwargs) -> List[int]:
+    def encode(self, text: str, add_special_tokens: bool = False, apply_safe_rule: bool = True, **kwargs) -> List[int]:
         escape_id = self.ensure_escape()
 
-        safe_text = self._apply_safe_rules(text)
+        safe_text = self._apply_safe_rules(text) if apply_safe_rule else text
         
         raw_ids = self.fast_tokenizer.encode(safe_text, add_special_tokens=add_special_tokens, **kwargs)
         

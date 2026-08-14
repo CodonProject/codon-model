@@ -11,9 +11,13 @@ Two convenient accessors are provided:
 '''
 
 from codon import *
+from codon.mixins.training import OptimizerGroups
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
 import types
+
+from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
+from .muon import Muon
 
 
 class GroupOptimizer:
@@ -179,11 +183,11 @@ class GroupOptimizer:
                     else:
                         print(f'Warning: Skipping scheduler state for unknown group "{name}"')
 
-    def get_lr(self, group_name: str) -> Union[float, List[float]]:
+    def get_lr(self, group_name: str) -> List[float]:
         '''Gets learning rate(s) for a specific group.'''
         opt = self.optimizers[group_name]
         lrs = [pg['lr'] for pg in opt.param_groups]
-        return lrs[0] if len(lrs) == 1 else lrs
+        return lrs
 
     def set_lr(self, group_name: str, lr: Union[float, List[float]]) -> None:
         '''Sets learning rate(s) for a specific group.'''
@@ -260,3 +264,179 @@ class GroupOptimizer:
     def __repr__(self) -> str:
         sched_info = f', schedulers={list(self.schedulers.keys())}' if self.schedulers else ''
         return f'GroupOptimizer(groups={list(self.optimizers.keys())}{sched_info})'
+
+    @staticmethod
+    def _create_scheduler_from_config(optimizer: Optimizer, config: Dict[str, Any]) -> _LRScheduler:
+        """
+        根据配置字典创建调度器。
+
+        Args:
+            optimizer: 优化器实例。
+            config: 调度器配置，支持两种格式：
+                1. 普通调度器：必须包含 'scheduler' 键（调度器类），其余键作为参数。
+                2. Warmup + Cosine 组合调度器：包含 'warmup_steps', 'total_steps', 'lr_min'。
+                   可选 'start_factor'（默认 1e-8），'end_factor'（默认 1.0）。
+                   将自动构建 SequentialLR(LinearLR, CosineAnnealingLR)。
+
+        Returns:
+            _LRScheduler: 调度器实例。
+
+        Raises:
+            ValueError: 如果配置不合法。
+        """
+        # 检查是否为 Warmup + Cosine 组合模式
+        if 'warmup_steps' in config and 'total_steps' in config and 'lr_min' in config:
+            warmup_steps = config['warmup_steps']
+            total_steps = config['total_steps']
+            lr_min = config['lr_min']
+            start_factor = config.get('start_factor', 1e-8)
+            end_factor = config.get('end_factor', 1.0)
+
+            if warmup_steps <= 0 or total_steps <= warmup_steps:
+                raise ValueError(
+                    f"warmup_steps ({warmup_steps}) must be positive and less than total_steps ({total_steps})"
+                )
+
+            # 构建 Warmup 调度器 (LinearLR)
+            warmup_scheduler = LinearLR(
+                optimizer,
+                start_factor=start_factor,
+                end_factor=end_factor,
+                total_iters=warmup_steps,
+            )
+            # 构建 Cosine 衰减调度器
+            decay_steps = total_steps - warmup_steps
+            cosine_scheduler = CosineAnnealingLR(
+                optimizer,
+                T_max=max(1, decay_steps),
+                eta_min=lr_min,
+            )
+            # 组合为 SequentialLR
+            return SequentialLR(
+                optimizer,
+                schedulers=[warmup_scheduler, cosine_scheduler],
+                milestones=[warmup_steps],
+            )
+
+        # 否则为普通调度器
+        if 'scheduler' not in config:
+            raise ValueError("Scheduler config must contain either 'scheduler' key or 'warmup_steps/total_steps/lr_min'.")
+        sched_cls = config.pop('scheduler')
+        # 检查是否继承自 _LRScheduler
+        if not hasattr(sched_cls, '__bases__') or _LRScheduler not in sched_cls.__bases__:
+            raise TypeError(f'"{sched_cls}" is not a valid scheduler class (must inherit _LRScheduler).')
+        return sched_cls(optimizer, **config)
+
+    @staticmethod
+    def build(
+        opt_groups: OptimizerGroups,
+        optimizer_mapping: Optional[Dict[str, Any]] = None,
+        scheduler_mapping: Optional[Dict[str, Dict[str, Any]]] = None,
+        unified_scheduler: Optional[Dict[str, Any]] = None,
+        defaults: Optional[Dict[str, Any]] = None,
+        **kwargs
+    ) -> 'GroupOptimizer':
+        """
+        从 OptimizerGroups 构建 GroupOptimizer 实例。
+
+        Args:
+            opt_groups: 由 TrainingUtilsMixin.optimizer_groups() 返回的对象。
+            optimizer_mapping: 映射组类型到优化器类。默认全部使用 AdamW。
+            scheduler_mapping: 按组类型指定调度器配置。键为 'standard', 'adamw', 'muon'。
+                值可为 None（不使用调度器）或字典（格式同 unified_scheduler）。
+                如果某类型在此映射中指定，将覆盖 unified_scheduler。
+            unified_scheduler: 统一调度器配置，作为所有组的默认配置。
+                若某组类型未在 scheduler_mapping 中指定，则使用此配置。
+                格式：普通调度器需包含 'scheduler' 键；Warmup+Cosine 组合需包含
+                'warmup_steps', 'total_steps', 'lr_min'。
+            defaults: 所有组的默认超参数（被组内同名键覆盖）。
+            **kwargs: 全局优化器参数（最低优先级）。
+
+        Returns:
+            GroupOptimizer 实例。
+        """
+        from copy import deepcopy
+
+        # 默认优化器映射
+        if optimizer_mapping is None:
+            optimizer_mapping = {'standard': torch.optim.AdamW, 'adamw': torch.optim.AdamW, 'muon': Muon}
+        for key in ['standard', 'adamw', 'muon']:
+            if key not in optimizer_mapping:
+                optimizer_mapping[key] = torch.optim.AdamW
+
+        # 构建 groups 字典
+        groups = {}
+        for prefix, group_list in [
+            ('standard', opt_groups.standard),
+            ('adamw', opt_groups.adamw),
+            ('muon', opt_groups.muon),
+        ]:
+            opt_cls = optimizer_mapping.get(prefix)
+            if opt_cls is None:
+                continue
+            for idx, pg in enumerate(group_list):
+                group_cfg = deepcopy(pg)
+                params = group_cfg.pop('params')
+                group_name = f"{prefix}_{idx}"
+                groups[group_name] = {
+                    'params': params,
+                    'optimizer': opt_cls,
+                    **group_cfg,
+                }
+
+        if not groups:
+            raise ValueError("No parameter groups found; all opt_groups lists are empty or optimizer_mapping is None.")
+
+        # 构建 schedulers 字典
+        schedulers = {}
+        # 预处理：统一调度器必须有效（若有）
+        if unified_scheduler is not None:
+            # 不做完整校验，由 _create_scheduler_from_config 在执行时校验
+            pass
+
+        for prefix, group_list in [
+            ('standard', opt_groups.standard),
+            ('adamw', opt_groups.adamw),
+            ('muon', opt_groups.muon),
+        ]:
+            # 获取该类型的特定调度器配置
+            prefix_sched_cfg = scheduler_mapping.get(prefix) if scheduler_mapping else None
+            # 决定使用哪种配置：优先使用 scheduler_mapping 中的，否则使用 unified_scheduler
+            if prefix_sched_cfg is None:
+                if unified_scheduler is None:
+                    continue  # 该类型不使用调度器
+                else:
+                    cfg = deepcopy(unified_scheduler)
+            else:
+                # 如果明确为 None，表示禁用该类型的调度器
+                if prefix_sched_cfg is None:
+                    continue
+                cfg = deepcopy(prefix_sched_cfg)
+
+            # 为该类型下的所有子组添加相同的调度器配置
+            for idx in range(len(group_list)):
+                group_name = f"{prefix}_{idx}"
+                schedulers[group_name] = cfg  # 保存配置，稍后实例化
+
+        wrapper = GroupOptimizer(
+            groups=groups,
+            schedulers=None,  # 稍后设置
+            defaults=defaults,
+            **kwargs
+        )
+
+        # 现在，为每个组创建调度器
+        for group_name, cfg in schedulers.items():
+            if group_name not in wrapper.optimizers:
+                continue
+            optimizer = wrapper.optimizers[group_name]
+            try:
+                sched = GroupOptimizer._create_scheduler_from_config(optimizer, cfg)
+                wrapper.schedulers[group_name] = sched
+            except Exception as e:
+                raise RuntimeError(f"Failed to create scheduler for group '{group_name}': {e}")
+
+        # 更新只读视图（因为我们修改了 wrapper.schedulers，需重新创建 MappingProxyType）
+        wrapper.sched = types.MappingProxyType(wrapper.schedulers)
+
+        return wrapper

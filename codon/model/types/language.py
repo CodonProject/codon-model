@@ -32,6 +32,7 @@ class CausalLanguageModel(BasicModel):
         input_ids: torch.Tensor,
         max_new_tokens: int = 100,
         sampler: Optional[Sampler] = None,
+        temperature: float = 0.7,
         eos_token_id: Optional[int] = None,
         past_key_values: Optional[ModelCache] = None
     ) -> torch.Tensor:
@@ -42,6 +43,7 @@ class CausalLanguageModel(BasicModel):
             input_ids (torch.Tensor): Input prompt token IDs with shape [batch, seq_len].
             max_new_tokens (int): Maximum number of new tokens to generate.
             sampler (Sampler, optional): Instance of Sampler. If None, default Sampler(0.7) is used.
+            temperature (float): Sampling temperature for the default Sampler. Only used if `sampler` is None.
             eos_token_id (int, optional): End-of-sequence token ID.
             past_key_values (ModelCache, optional): Cache container to reuse states across decode steps.
 
@@ -50,7 +52,7 @@ class CausalLanguageModel(BasicModel):
         '''
         self.eval()
         if sampler is None:
-            sampler = Sampler(temperature=0.7)
+            sampler = Sampler(temperature=temperature)
 
         generated = input_ids.clone()
         

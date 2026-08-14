@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from typing import Callable, Any, Optional, List, Dict
+from typing import Callable, Any, Optional, List, Dict, Union
 from dataclasses import dataclass
 from codon.mixins._types import TModule
 
@@ -13,15 +13,44 @@ class OptimizerGroups:
 
 
 class TrainingUtilsMixin:
-    def clip_grad_norm(self, max_norm: float, norm_type: float = 2.0) -> float:
-        return torch.nn.utils.clip_grad_norm_(self.trainable_params, max_norm, norm_type=norm_type)
+    _grad_norm_ema: Optional[float] = None
+    _ema_decay: float = 0.99
+
+    def clip_grad_norm(
+        self,
+        max_norm: Union[float, str],
+        norm_type: float = 2.0,
+        auto_multiplier: float = 2.0
+    ) -> float:
+        if isinstance(max_norm, str) and max_norm.lower() == 'auto':
+            total_norm = torch.nn.utils.clip_grad_norm_(
+                self.trainable_params, float('inf'), norm_type=norm_type
+            )
+            ema = getattr(self, '_grad_norm_ema', None)
+            if ema is None:
+                ema = total_norm.item()
+            else:
+                ema = self._ema_decay * ema + (1 - self._ema_decay) * total_norm.item()
+            self._grad_norm_ema = ema
+
+            adaptive_threshold = ema * auto_multiplier
+            if adaptive_threshold < 1e-8:
+                adaptive_threshold = 1.0
+            max_norm = adaptive_threshold
+
+        return torch.nn.utils.clip_grad_norm_(
+            self.trainable_params, max_norm, norm_type=norm_type
+        )
 
     def optimizer_groups(
         self, 
         weight_decay: float = 1e-2, 
         lora_lr: Optional[float] = None, 
         base_lr: Optional[float] = None,
-        use_muon_for_lora: bool = False
+        use_muon_for_lora: bool = False,
+        standard_kwargs: Optional[Dict[str, Any]] = None,
+        adamw_kwargs: Optional[Dict[str, Any]] = None,
+        muon_kwargs: Optional[Dict[str, Any]] = None,
     ) -> OptimizerGroups:
         param_to_module = {}
         for mn, m in self.named_modules():
@@ -70,28 +99,30 @@ class TrainingUtilsMixin:
                 else:
                     (adamw_decay_base if is_decay else adamw_nodecay_base).append(p)
 
-        def _add_group(target_list: list, params: list, wd: float, lr: Optional[float]):
+        def _add_group(target_list: list, params: list, wd: float, lr: Optional[float], extra_kwargs: Optional[Dict] = None):
             if params:
                 group = {'params': params, 'weight_decay': wd}
                 if lr is not None:
                     group['lr'] = lr
+                if extra_kwargs:
+                    group.update(extra_kwargs)
                 target_list.append(group)
 
         standard_groups = []
-        _add_group(standard_groups, std_decay_base, weight_decay, base_lr)
-        _add_group(standard_groups, std_nodecay_base, 0.0, base_lr)
-        _add_group(standard_groups, std_decay_lora, weight_decay, lora_lr or base_lr)
-        _add_group(standard_groups, std_nodecay_lora, 0.0, lora_lr or base_lr)
+        _add_group(standard_groups, std_decay_base, weight_decay, base_lr, standard_kwargs)
+        _add_group(standard_groups, std_nodecay_base, 0.0, base_lr, standard_kwargs)
+        _add_group(standard_groups, std_decay_lora, weight_decay, lora_lr or base_lr, standard_kwargs)
+        _add_group(standard_groups, std_nodecay_lora, 0.0, lora_lr or base_lr, standard_kwargs)
 
         muon_groups = []
-        _add_group(muon_groups, muon_base, 0.0, base_lr)
-        _add_group(muon_groups, muon_lora, 0.0, lora_lr or base_lr)
+        _add_group(muon_groups, muon_base, 0.0, base_lr, muon_kwargs)
+        _add_group(muon_groups, muon_lora, 0.0, lora_lr or base_lr, muon_kwargs)
 
         adamw_groups = []
-        _add_group(adamw_groups, adamw_decay_base, weight_decay, base_lr)
-        _add_group(adamw_groups, adamw_nodecay_base, 0.0, base_lr)
-        _add_group(adamw_groups, adamw_decay_lora, weight_decay, lora_lr or base_lr)
-        _add_group(adamw_groups, adamw_nodecay_lora, 0.0, lora_lr or base_lr)
+        _add_group(adamw_groups, adamw_decay_base, weight_decay, base_lr, adamw_kwargs)
+        _add_group(adamw_groups, adamw_nodecay_base, 0.0, base_lr, adamw_kwargs)
+        _add_group(adamw_groups, adamw_decay_lora, weight_decay, lora_lr or base_lr, adamw_kwargs)
+        _add_group(adamw_groups, adamw_nodecay_lora, 0.0, lora_lr or base_lr, adamw_kwargs)
 
         return OptimizerGroups(
             standard=standard_groups,

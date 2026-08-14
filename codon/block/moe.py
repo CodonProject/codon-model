@@ -108,33 +108,55 @@ class MoE(BasicModel):
         
         self.gate = nn.Linear(model_dim, num_experts, bias=False)
     
-    def count_params(self, trainable_only:bool=False, active_only:bool=False, human_readable:bool=False, seen:set=None) -> Union[int, str]:
-        '''
-        Count the number of parameters in the model.
-        
-        Args:
-            trainable_only (bool, optional): If True, count only trainable parameters.
-            active_only (bool, optional): If True, count only active parameters (e.g. for MoE).
-            human_readable (bool, optional): If True, return a string representation with units (e.g. M, B).
-            seen (set, optional): A set of already counted parameters to avoid duplicates.
-            
-        Returns:
-            Union[int, str]: The total number of parameters.
-        '''
+    def count_params(
+        self,
+        trainable_only: bool = False,
+        active_only: bool = False,
+        lora_only: bool = False,
+        human_readable: bool = False,
+        seen: set = None,
+        **kwargs
+    ) -> Union[int, str]:
         if seen is None:
             seen = set()
 
         if not active_only:
-            return super().count_params(trainable_only, active_only, human_readable, seen)
-        
-        total = BasicModel._count_params_recursive(self.gate, trainable_only, active_only, seen)
-        
+            return super().count_params(
+                trainable_only=trainable_only,
+                active_only=active_only,
+                lora_only=lora_only,
+                human_readable=human_readable,
+                seen=seen,
+                **kwargs
+            )
+
+        total = self._count_params_recursive(
+            self.gate,
+            trainable_only=trainable_only,
+            active_only=active_only,
+            lora_only=lora_only,
+            seen=seen
+        )
+
         if self.shared_experts is not None:
-            total += BasicModel._count_params_recursive(self.shared_experts, trainable_only, active_only, seen)
-            
+            total += self._count_params_recursive(
+                self.shared_experts,
+                trainable_only=trainable_only,
+                active_only=active_only,
+                lora_only=lora_only,
+                seen=seen
+            )
+
         if len(self.experts) > 0:
-            single_expert_params = self.experts[0].count_params(trainable_only, active_only, human_readable=False, seen=seen)
-            if isinstance(single_expert_params, str): single_expert_params = 0
+            single_expert_params = self.experts[0].count_params(
+                trainable_only=trainable_only,
+                active_only=False,
+                lora_only=lora_only,
+                human_readable=False,
+                seen=seen
+            )
+            if isinstance(single_expert_params, str):
+                single_expert_params = 0
             total += single_expert_params * self.top_k
 
         if human_readable:
@@ -145,7 +167,7 @@ class MoE(BasicModel):
             elif total >= 1e3:
                 return f'{total / 1e3:.2f}K'
             return str(total)
-            
+
         return total
 
     @property

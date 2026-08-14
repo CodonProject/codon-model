@@ -80,7 +80,7 @@ class Muon(BasicOptimizer):
         ValueError: If gradient tensor has fewer than 2 dimensions (Muon only supports 2D/4D weights).
     '''
 
-    def __init__(self, params, lr=1e-3, momentum=0.95, nesterov=True, ns_steps=5):
+    def __init__(self, params, lr=1e-3, momentum=0.95, nesterov=True, ns_steps=5, *args, **kwargs):
         if lr < 0.0:
             raise ValueError(f'Invalid learning rate: {lr}')
         if not 0.0 <= momentum < 1.0:
