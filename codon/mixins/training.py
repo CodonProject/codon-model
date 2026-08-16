@@ -29,7 +29,7 @@ class TrainingUtilsMixin:
             ema = getattr(self, '_grad_norm_ema', None)
             if ema is None:
                 ema = total_norm.item()
-            else:
+            if total_norm < 1000:  
                 ema = self._ema_decay * ema + (1 - self._ema_decay) * total_norm.item()
             self._grad_norm_ema = ema
 
@@ -40,94 +40,6 @@ class TrainingUtilsMixin:
 
         return torch.nn.utils.clip_grad_norm_(
             self.trainable_params, max_norm, norm_type=norm_type
-        )
-
-    def optimizer_groups(
-        self, 
-        weight_decay: float = 1e-2, 
-        lora_lr: Optional[float] = None, 
-        base_lr: Optional[float] = None,
-        use_muon_for_lora: bool = False,
-        standard_kwargs: Optional[Dict[str, Any]] = None,
-        adamw_kwargs: Optional[Dict[str, Any]] = None,
-        muon_kwargs: Optional[Dict[str, Any]] = None,
-    ) -> OptimizerGroups:
-        param_to_module = {}
-        for mn, m in self.named_modules():
-            for pn, p in m.named_parameters(recurse=False):
-                param_to_module[p] = (mn, m, pn)
-
-        std_decay_base, std_nodecay_base = [], []
-        std_decay_lora, std_nodecay_lora = [], []
-
-        muon_base, muon_lora = [], []
-        adamw_decay_base, adamw_nodecay_base = [], []
-        adamw_decay_lora, adamw_nodecay_lora = [], []
-
-        for fpn, p in self.named_parameters():
-            if not p.requires_grad:
-                continue
-
-            mn, m, pn = param_to_module.get(p, ('', None, fpn.split('.')[-1]))
-
-            is_lora = any(k in fpn for k in ['lora_', 'dora_']) and 'original_layer' not in fpn
-            
-            is_embed = 'embed' in fpn.lower() or (m is not None and isinstance(m, nn.Embedding))
-            
-            is_bias_or_norm = (
-                p.ndim < 2
-                or pn.endswith('bias')
-                or any(k in pn for k in ['lora_gate', 'dora_m'])
-                or any(x in fpn.lower() for x in ['norm', 'ln_', 'scale', 'gate'])
-                or (m is not None and isinstance(m, (nn.LayerNorm, nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d, nn.GroupNorm)))
-            )
-
-            is_decay = not is_bias_or_norm and not is_embed
-            
-            is_muon_candidate = p.ndim >= 2 and not is_embed and not is_bias_or_norm
-
-            if is_lora:
-                (std_decay_lora if is_decay else std_nodecay_lora).append(p)
-            else:
-                (std_decay_base if is_decay else std_nodecay_base).append(p)
-
-            if is_muon_candidate and (use_muon_for_lora or not is_lora):
-                (muon_lora if is_lora else muon_base).append(p)
-            else:
-                if is_lora:
-                    (adamw_decay_lora if is_decay else adamw_nodecay_lora).append(p)
-                else:
-                    (adamw_decay_base if is_decay else adamw_nodecay_base).append(p)
-
-        def _add_group(target_list: list, params: list, wd: float, lr: Optional[float], extra_kwargs: Optional[Dict] = None):
-            if params:
-                group = {'params': params, 'weight_decay': wd}
-                if lr is not None:
-                    group['lr'] = lr
-                if extra_kwargs:
-                    group.update(extra_kwargs)
-                target_list.append(group)
-
-        standard_groups = []
-        _add_group(standard_groups, std_decay_base, weight_decay, base_lr, standard_kwargs)
-        _add_group(standard_groups, std_nodecay_base, 0.0, base_lr, standard_kwargs)
-        _add_group(standard_groups, std_decay_lora, weight_decay, lora_lr or base_lr, standard_kwargs)
-        _add_group(standard_groups, std_nodecay_lora, 0.0, lora_lr or base_lr, standard_kwargs)
-
-        muon_groups = []
-        _add_group(muon_groups, muon_base, 0.0, base_lr, muon_kwargs)
-        _add_group(muon_groups, muon_lora, 0.0, lora_lr or base_lr, muon_kwargs)
-
-        adamw_groups = []
-        _add_group(adamw_groups, adamw_decay_base, weight_decay, base_lr, adamw_kwargs)
-        _add_group(adamw_groups, adamw_nodecay_base, 0.0, base_lr, adamw_kwargs)
-        _add_group(adamw_groups, adamw_decay_lora, weight_decay, lora_lr or base_lr, adamw_kwargs)
-        _add_group(adamw_groups, adamw_nodecay_lora, 0.0, lora_lr or base_lr, adamw_kwargs)
-
-        return OptimizerGroups(
-            standard=standard_groups,
-            muon=muon_groups,
-            adamw=adamw_groups
         )
 
     def tie_weights(self: TModule, source_module_path: str, target_module_path: str) -> TModule:

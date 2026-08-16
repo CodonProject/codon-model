@@ -8,12 +8,6 @@ from codon.model.types.language import CausalLanguageModel, CausalLanguageModelO
 
 class MotifA2(CausalLanguageModel):
 
-    __remote_resource__ = {
-        'repo': 'CodonProject/MotifA1-SFT',
-        'files': ['MotifA1_SFT.safetensors'],
-        'repo_type': 'model'
-    }
-
     def __init__(
         self,
         vocab_size: int = 2**14,
@@ -22,7 +16,7 @@ class MotifA2(CausalLanguageModel):
         num_heads: int = 8,
         num_kv_heads: int = 2,
         dropout: float = 0.1,
-        tie_weights: bool = True
+        tie_weights: bool = False
     ):
         super().__init__()
         self.vocab_size = vocab_size

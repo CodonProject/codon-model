@@ -1,3 +1,0 @@
-from codon import *
-
-

@@ -486,15 +486,12 @@ def get_activation(name: Union[str, BasicModel], **kwargs) -> BasicModel:
     if not isinstance(name, str):
         raise TypeError(f'Activation name must be a string or BasicModel, but got {type(name)}')
 
-    # 1. 规范化命名：转小写，移除下划线和减号
     raw_name = name
     name = name.lower().replace('_', '').replace('-', '')
     
-    # 2. 检查别名
     if name in _ACT_ALIAS:
         name = _ACT_ALIAS[name]
         
-    # 3. 映射表定义 (类名与字符串的映射)
     act_map: Dict[str, Type[BasicModel]] = {
         'relu': ReLU,
         'relu6': ReLU6,
@@ -522,13 +519,11 @@ def get_activation(name: Union[str, BasicModel], **kwargs) -> BasicModel:
         'tanhshrink': Tanhshrink,
         'threshold': Threshold,
         
-        # GLU 家族
         'swiglu': SwiGLU,
         'geglu': GeGLU,
         'reglu': ReGLU,
         'glu': GLU,
         
-        # 部署加速与新型变体
         'quickgelu': QuickGELU,
         'hardswish': HardSwish,
         'hardsigmoid': HardSigmoid,
