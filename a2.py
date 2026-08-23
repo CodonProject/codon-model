@@ -98,7 +98,7 @@ for batch_idx, batch in enumerate(pbar):
         labels = seq[1:].unsqueeze(0)
     
         with torch.autocast(device_type=model.device.type, dtype=torch.bfloat16):
-            output = model(inputs) 
+            output = model(inputs)
             logits = output.logits
             aux = output.aux_loss
             aux = torch.tensor(0.0) if aux is None else aux

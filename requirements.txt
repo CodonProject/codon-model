@@ -7,7 +7,6 @@ tokenizers
 # dataset
 pandas
 numpy
-pyarrow
 pillow
 
 # service

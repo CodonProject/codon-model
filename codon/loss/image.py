@@ -14,6 +14,7 @@ Each component can be enabled by providing a positive weight.
 from codon import *
 from torchvision import models
 from torchvision.models import VGG19_Weights, AlexNet_Weights
+from codon.loss.base import LossOutput
 
 try:
     from pytorch_msssim import ssim as ssim_func
@@ -268,4 +269,4 @@ class ImageCombinedLoss(BasicLoss):
             lpips_val = self.lpips_model(pred_m11, target_m11).mean()
             total_loss += self.weight_lpips * lpips_val
 
-        return total_loss
+        return LossOutput(loss=total_loss)

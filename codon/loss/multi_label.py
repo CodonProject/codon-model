@@ -1,6 +1,8 @@
 from codon import *
+from codon.loss.base import LossOutput, register_loss
 
 
+@register_loss('prior_mutil_label')
 class PriorMultiLabelSoftMarginLoss(BasicLoss):
     '''
     Loss function based on MultiLabelSoftMarginLoss that incorporates class priors.
@@ -45,13 +47,14 @@ class PriorMultiLabelSoftMarginLoss(BasicLoss):
 
         loss = F.binary_cross_entropy_with_logits(adjusted_logits, targets, reduction='none')
         if self.reduction == 'mean':
-            return loss.mean()
+            return LossOutput(loss=loss.mean())
         elif self.reduction == 'sum':
-            return loss.sum()
+            return LossOutput(loss=loss.sum())
         else:  # 'none'
-            return loss
+            return LossOutput(loss=loss)
 
 
+@register_loss('asymmetric_mutil_label')
 class AsymmetricLoss(BasicLoss):
     '''
     Asymmetric Loss (ASL) — An asymmetric loss function for multi-label classification.
@@ -99,8 +102,8 @@ class AsymmetricLoss(BasicLoss):
         loss = loss_pos + loss_neg
 
         if self.reduction == 'mean':
-            return loss.mean()
+            return LossOutput(loss=loss.mean())
         elif self.reduction == 'sum':
-            return loss.sum()
+            return LossOutput(loss=loss.sum())
         else:
-            return loss
+            return LossOutput(loss=loss)

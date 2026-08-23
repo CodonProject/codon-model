@@ -40,21 +40,6 @@ class BasicModel(
         return utils_safecode(length=length, exclude_confusing=exclude_confusing)
 
 
-class BasicLoss(
-    nn.Module,
-    DeviceDtypeMixin,
-    ParameterMixin,
-    TraversalMixin,
-    SnapshotMixin
-):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        
-        @wraps(utils_safecode)
-        def safecode(self, length: int = 4, exclude_confusing: bool = False) -> str:
-            return utils_safecode(length=length, exclude_confusing=exclude_confusing)
-
-
 class BasicOptimizer(
     Optimizer,
     DeviceDtypeMixin,
