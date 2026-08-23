@@ -1,4 +1,5 @@
 from codon  import *
+from codon.block.activation import get_activation
 
 
 def calculate_causal_layer(step: int, kernel_size: int = 3) -> Tuple[int, int]:
@@ -308,22 +309,7 @@ class ConvBlock(BasicModel):
             else:
                 raise ValueError(f'Unsupported normalization: {norm}')
 
-        self.act = None
-        if activation is not None:
-            if activation == 'relu':
-                self.act = nn.ReLU(inplace=True)
-            elif activation == 'leaky_relu':
-                self.act = nn.LeakyReLU(leaky_relu, inplace=True)
-            elif activation == 'gelu':
-                self.act = nn.GELU()
-            elif activation == 'silu':
-                self.act = nn.SiLU(inplace=True)
-            elif activation == 'tanh':
-                self.act = nn.Tanh()
-            elif activation == 'sigmoid':
-                self.act = nn.Sigmoid()
-            else:
-                raise ValueError(f'Unsupported activation: {activation}')
+        self.act = get_activation(activation)
 
         self.dropout = nn.Dropout(dropout) if dropout > 0 else None
 
@@ -496,20 +482,7 @@ class ResBasicBlock(BasicModel):
         self.variant = variant
         self.activation = activation
         
-        self.act = None
-        if variant == 'original' and activation is not None:
-            if activation == 'relu':
-                self.act = nn.ReLU(inplace=True)
-            elif activation == 'leaky_relu':
-                self.act = nn.LeakyReLU(0.1, inplace=True)
-            elif activation == 'gelu':
-                self.act = nn.GELU()
-            elif activation == 'silu':
-                self.act = nn.SiLU(inplace=True)
-            elif activation == 'tanh':
-                self.act = nn.Tanh()
-            elif activation == 'sigmoid':
-                self.act = nn.Sigmoid()
+        self.act = get_activation(activation)
 
         if variant == 'original':
             # Conv1: Conv-Norm-Act
