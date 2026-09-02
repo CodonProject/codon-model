@@ -13,3 +13,5 @@ pillow
 fastapi
 uvicorn
 
+# utils
+psutil

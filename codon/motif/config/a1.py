@@ -7,7 +7,7 @@ def build_config(total_steps: int) -> dict:
     if total_steps >= 20000:
         warmup_steps = max(2000, min(10000, int(total_steps * 0.05)))
     else:
-        warmup_steps = max(1, int(total_steps * 0.1))
+        warmup_steps = max(1, int(total_steps * 0.08))
 
     return {
         'lr_peak': 6e-4,
