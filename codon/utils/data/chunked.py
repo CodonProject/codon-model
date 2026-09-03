@@ -171,9 +171,13 @@ class ChunkedTokenStream(CodonIterableDataset):
         if isinstance(self.data, CodonDataset):
             wrapper = self.data.compose(seek=self._upstream_offset)
             for i in range(len(wrapper)):
-                ids = self._extract_ids(wrapper[i])
-                self._token_buffer.extend(ids)
-                self._token_buffer.append(self.eos_token_id)
+                # A map index may yield one record *or* a batch of records
+                # (e.g. TextFileDataset with a tokenizer returns one segment
+                # list per file). Flatten them like the generic branch below;
+                # a single EOS per batch keeps resume offsets aligned.
+                for ids in self._normalize_item(wrapper[i]):
+                    self._token_buffer.extend(ids)
+                    self._token_buffer.append(self.eos_token_id)
                 self._upstream_offset += 1
                 yield from self._drain_buffer()
             return

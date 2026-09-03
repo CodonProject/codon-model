@@ -146,6 +146,10 @@ class PackedTokenizer(RemoteResourceMixin):
         return self._tokenizer
     
     @property
+    def vocab_size(self) -> int:
+        return self._tokenizer.get_vocab_size()
+    
+    @property
     def fast_tokenizer(self) -> PreTrainedTokenizerFast:
         if self._fast_tokenizer is None:
             raise ValueError('Tokenizer is not loaded.')

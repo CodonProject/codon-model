@@ -27,20 +27,27 @@ class BoundedTensor(torch.Tensor):
         self._low = low
         self._high = high
 
+    @property
+    def raw(self):
+        '''The unconstrained parameter this tensor is derived from.'''
+        return self._raw
+
     def fresh(self):
         return _constrain(self._raw, self._low, self._high)
 
     @classmethod
     def __torch_function__(cls, func, types, args=(), kwargs=None):
         kwargs = {} if kwargs is None else dict(kwargs)
-        args = [
-            a.fresh() if isinstance(a, BoundedTensor) and hasattr(a, 'raw') else a
-            for a in args
-        ]
-        kwargs = {
-            k: v.fresh() if isinstance(v, BoundedTensor) and hasattr(v, 'raw') else v
-            for k, v in kwargs.items()
-        }
+
+        # Every BoundedTensor carries its parameter under ``_raw`` (never a
+        # ``raw`` attribute), so unwrap by type alone. Leaving an instance in
+        # ``args`` makes torch re-dispatch into this method -> infinite
+        # recursion -> native stack overflow (silent exit).
+        def _unwrap(x):
+            return x.fresh() if isinstance(x, BoundedTensor) else x
+
+        args = tuple(_unwrap(a) for a in args)
+        kwargs = {k: _unwrap(v) for k, v in kwargs.items()}
         return func(*args, **kwargs)
 
     @classmethod
