@@ -8,6 +8,20 @@ import json
 
 MaskPolicy = Union[Literal['all', 'none', 'content', 'thought', 'answer', 'fim'], Sequence[bool]]
 
+# A2 / codon.j2 词表风格（<|...|>）。Session 默认用 A1 方括号 token 名；
+# 若词表含 <|im_start|> 则按此映射整体切换。
+_ANGLE_TOKEN_NAMES = {
+    'im_start': '<|im_start|>', 'im_end': '<|im_end|>',
+    'system': '<|system|>', 'user': '<|user|>',
+    'model': '<|model|>', 'tool': '<|tool_response|>',
+    'fim': '<|fim_middle|>',
+    'cot_start': '<|thought_start|>', 'cot_end': '<|thought_end|>',
+    'fim_pre': '<|fim_prefix|>', 'fim_mid': '<|fim_middle|>', 'fim_suf': '<|fim_suffix|>',
+    'pad': '<|pad|>',
+    'image_start': '<|modality_image_start|>', 'image_end': '<|modality_image_end|>',
+    'image_patch': '<|modality_image_pad|>',
+}
+
 @dataclass
 class Message:
     ids: list[int]
@@ -113,6 +127,7 @@ class Session:
             'image_patch': '[unused_43]',
         }
         self._ids: dict[str, Optional[int]] = {}
+        self._maybe_use_angle_tokens()
         self._resolve_specials()
 
         self.policy: dict[str, MaskPolicy] = {
@@ -122,6 +137,20 @@ class Session:
             'model': 'content',
             'fim': 'fim',
         }
+
+    def _maybe_use_angle_tokens(self) -> None:
+        '''A2 词表（<|im_start|> 风格）探测：切换 token 名并从 codon.j2 注入空模板。'''
+        if self.tokenizer.token_to_id('<|im_start|>') is None:
+            return                       # A1 方括号风格，保持默认
+        self._tokens = dict(_ANGLE_TOKEN_NAMES)
+        template = getattr(self.tokenizer, 'template', '')
+        if not (template or '').strip():
+            try:
+                from codon.res import LM
+                with open(LM['jinja'], encoding='utf-8') as f:
+                    self.tokenizer.set_chat_template(f.read())
+            except Exception:
+                pass
 
     def _resolve_specials(self) -> None:
         self._ids = {k: self.tokenizer.token_to_id(v) for k, v in self._tokens.items()}
@@ -160,13 +189,18 @@ class Session:
         elif policy == 'none':
             msg.unmask_all()
         elif policy == 'content':
+            # 只对 model 回复部分算 loss：从 thought_start（有思考时）或 role 标签
+            # 之后开始 unmask 到消息末尾（含 im_end），排除 role 标签本身入 loss。
             msg.mask_all()
             anchor = self._ids.get('cot_start')
             idx = msg.find(anchor) if anchor is not None else -1
             if idx < 0:
                 role_id = self._ids.get(msg.role or '')
-                idx = msg.find(role_id) if role_id is not None else 0
-            msg.unmask_between(idx, len(msg), include_boundaries=(True, True))
+                idx = msg.find(role_id) if role_id is not None else -1
+                if idx >= 0:
+                    idx += 1             # 跳过 role 标签，从回复正文起算
+            if idx >= 0:
+                msg.unmask_between(idx, len(msg), include_boundaries=(True, True))
         elif policy == 'thought':
             msg.mask_all()
             s_id, e_id = self._ids.get('cot_start'), self._ids.get('cot_end')

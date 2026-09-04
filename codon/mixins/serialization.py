@@ -45,7 +45,15 @@ class SerializationMixin:
         from codon.utils.lora import save_lora
         save_lora(getattr(self, 'original_model', self), path)
         return self
-    
+
+    def save_pretrained(self: TModule, path: str, **kwargs) -> TModule:
+        '''HF 风格别名：导出全量（含 backbone）权重到 path。LoRA 训练后用 merge 全量或改用 save_lora。'''
+        return self.save(path, **kwargs)
+
+    def load_pretrained(self: TModule, path: str, strict: bool = False) -> TModule:
+        '''HF 风格别名：从全量权重加载。'''
+        return self.load(path, strict=strict)
+
     def save(
         self: TModule, 
         path: str, 

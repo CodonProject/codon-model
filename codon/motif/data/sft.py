@@ -2,7 +2,7 @@ import json
 import os
 import random
 from glob import glob
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 
 import torch
 
@@ -134,18 +134,22 @@ class MotifSFT(CodonDataset):
             session.add_message(model_msg)
         return session
 
-    def _build_sample(self, group: dict) -> dict[str, torch.Tensor]:
+    def _build_sample(self, group: dict) -> dict[str, Any]:
         session = self._build_session(group)
         tensors = session.to_tensors(pad_to=self.pad_length)
         p = self.pad_length
         if tensors['input_ids'].size(0) > p:
-            tensors = {k: v[:p].contiguous() for k, v in tensors.items()}
+            # 仅截断张量字段；images 等 list 字段保持原值（纯文本 SFT 为空）。
+            tensors = {
+                k: (v[:p].contiguous() if torch.is_tensor(v) else v)
+                for k, v in tensors.items()
+            }
         return tensors
 
     def __len__(self) -> int:
         return len(self.groups) // self.batch_size
 
-    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+    def __getitem__(self, idx: int) -> dict[str, Any]:
         length = len(self)
         if idx < 0:
             idx += length
@@ -155,7 +159,13 @@ class MotifSFT(CodonDataset):
         start = idx * self.batch_size
         end = start + self.batch_size
         samples = [self._build_sample(g) for g in self.groups[start:end]]
-        return {
-            key: torch.stack([s[key] for s in samples])
-            for key in samples[0]
-        }
+        # Session.to_tensors 的 images 键是 list[Tensor]（纯文本为空 list），
+        # 不能 torch.stack；只对张量字段做 batch 堆叠，list 字段按样本展平拼接。
+        out: dict[str, Any] = {}
+        for key in samples[0]:
+            vals = [s[key] for s in samples]
+            if torch.is_tensor(vals[0]):
+                out[key] = torch.stack(vals)
+            elif vals[0] is not None:
+                out[key] = [v for item in vals for v in item]
+        return out

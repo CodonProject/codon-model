@@ -5,11 +5,36 @@ from codon.pipeline.callback import Callback
 from codon.model.types.language import CausalLanguageModel, CausalLanguageModelOutput
 from codon.utils.tokens import PackedTokenizer
 
+from typing import Any, Dict, List, Optional, Union
+
 from tqdm import tqdm
+
+# LoRA 注入目标的声明类型：族名 / nn.Module 类型 / 具体模块名（可混合列表）
+_LoraTarget = Union[str, type, List[Union[str, type]]]
 
 # =========================================================================
 # 一、配置
 # =========================================================================
+
+@configclass
+class LoRAConfig:
+    '''SFTPipeline 内化的 LoRA 注入配置。enabled 时由 setup() 自动注入并冻结主干。'''
+    enabled: bool = field(default=True)
+    target: str = field(default='all-linear')                     # 'all-linear' | 'attn' | 'mlp' | 'expert' | 'qkv'
+    target_modules: Optional[_LoraTarget] = field(default=None)   # 显式覆盖 target：类型/名字/族名（可 list）
+    include: Optional[List[str]] = field(default=None)            # 模块路径须含任一片段才注入
+    exclude: Optional[List[str]] = field(default_factory=lambda: ['proj_out', 'moe.gate'])  # 命中片段则跳过
+    module_exclude: Optional[List[Any]] = field(default=None)     # 按路径子串 / 类型 / nn.Module 实例排除整模块
+    r: int = field(default=8)
+    lora_alpha: int = field(default=16)
+    lora_dropout: float = field(default=0.05)
+    gate: bool = field(default=False)
+    dora: bool = field(default=False)
+    gradient_checkpointing: bool = field(default=False)
+    lr_multiplier: float = field(default=1.0)        # LoRA 参数学习率倍率（>1 加速适配，可 <1）
+    weight_decay: Optional[float] = field(default=None)  # None=沿用 SFTConfig.weight_decay
+    save_merged: bool = field(default=False)         # stage/final 额外导出 merged 全量（adapter 之外）
+
 
 @configclass
 class SFTConfig:
@@ -40,6 +65,28 @@ class SFTConfig:
     probe_max_new_tokens: int = field(default=128)
     probe_temperature: float = field(default=0.8)
 
+    # ---- LoRA 增强适配 ----
+    # True=启用默认 LoRAConfig；False/None=普通全参 SFT；亦可传 LoRAConfig(...) 自定义。
+    lora: Optional[Union[LoRAConfig, bool]] = field(default=None)
+    aux_weight: float = field(default=1.0)             # loss = CE + aux_weight * aux_loss（1.0 保持原行为）
+
+    # ---- 数据集声明（stage 内化）：不传 stages 时 pipeline 据此自动 build_sft_stages ----
+    stage_specs: List[Dict[str, Any]] = field(default_factory=list)  # [{name, folder, epochs, ckpt}, ...]
+    pad_length: int = field(default=2048)
+    batch_size: int = field(default=8)
+    dataset_kwargs: Dict[str, Any] = field(default_factory=dict)     # 透传 MotifSFT：two_turn_prob/three_turn_prob/system_prompts/pattern/recursive/seed
+
+
+def _coerce_lora_config(lora: Any) -> Optional[LoRAConfig]:
+    '''把 SFTConfig.lora（bool / LoRAConfig / None）归一化为 Optional[LoRAConfig]。'''
+    if lora is None or lora is False:
+        return None
+    if lora is True:
+        return LoRAConfig()          # enabled 默认 True
+    if isinstance(lora, LoRAConfig):
+        return lora
+    raise TypeError(
+        f'SFTConfig.lora 需为 bool 或 LoRAConfig 实例，got {type(lora).__name__}')
 
 # =========================================================================
 # 二、SFT 阶段
@@ -138,7 +185,7 @@ class _AutoCheckpoint(Callback):
         if stage is None or not stage.ckpt:
             return
         try:
-            pipeline._model.save_pretrained(stage.ckpt)
+            pipeline.save_stage(stage)
             tqdm.write(f'[*] Stage [{stage.name}] saved -> {stage.ckpt}')
         except Exception as e:
             tqdm.write(f'[!] Failed to save stage ckpt {stage.ckpt}: {e}')
@@ -218,12 +265,16 @@ class SFTPipeline(BasicPipeline):
         self,
         model: CausalLanguageModel,
         tokenizer: PackedTokenizer,
-        stages: List[SFTStage],
-        config: SFTConfig,
+        stages: Optional[List[SFTStage]] = None,
+        config: SFTConfig = None,
         device=None,
         callbacks=None,
         seed=None,
     ):
+        # stage 内化：config 缺省时可从 SFTConfig.stage_specs/pad_length/batch_size 声明构建，
+        # 保持旧调用（显式传 stages + config）完全兼容。
+        if config is None:
+            raise ValueError('SFTPipeline 需要 config=SFTConfig(...)。')
         device = model.device if not device else device
         super().__init__(device, callbacks, seed)
         self.callbacks = list(self.callbacks)
@@ -234,8 +285,15 @@ class SFTPipeline(BasicPipeline):
         )
         self._tokenizer = tokenizer
         self._config = config
-        self._stages: List[SFTStage] = list(stages)
+        self._stages: List[SFTStage] = (
+            list(stages) if stages is not None else self._build_stages_from_config()
+        )
         self._current_stage: Optional[SFTStage] = None
+
+        # ---- LoRA 适配状态（lora 支持 True/False/LoRAConfig 归一化）----
+        self._lora_cfg: Optional[LoRAConfig] = _coerce_lora_config(config.lora)
+        self._lora_active: bool = bool(self._lora_cfg is not None and self._lora_cfg.enabled)
+        self._aux_weight: float = config.aux_weight if config is not None else 1.0
 
         self._total_steps: int = 0
         self._optimizer = None
@@ -266,6 +324,21 @@ class SFTPipeline(BasicPipeline):
             )
             self.callbacks.append(self._probe_cb)
 
+    # ------------------------------------------------------------ stage 内化
+    def _build_stages_from_config(self) -> List[SFTStage]:
+        '''按 SFTConfig.stage_specs / pad_length / batch_size / dataset_kwargs 自动构建数据集阶段。'''
+        cfg = self._config
+        specs = list(cfg.stage_specs or [])
+        if not specs:
+            raise ValueError(
+                'SFTPipeline 需要显式 stages=... 或在 SFTConfig 声明 stage_specs '
+                '（形如 [{"name","folder","epochs","ckpt"}]）以自动构建数据集。')
+        ds_kwargs = dict(cfg.dataset_kwargs or {})
+        return build_sft_stages(
+            specs, self._tokenizer,
+            pad_length=cfg.pad_length, batch_size=cfg.batch_size, **ds_kwargs,
+        )
+
     # ------------------------------------------------------------ 属性
     @property
     def model(self) -> CausalLanguageModel:
@@ -287,7 +360,35 @@ class SFTPipeline(BasicPipeline):
         return {'main': self._optimizer} if self._optimizer is not None else {}
 
     # ------------------------------------------------------------ setup
+    def _assemble_lora(self) -> None:
+        '''按 LoRAConfig 注入 LoRA 并冻结主干。幂等：已注入（外部手配）则只补 freeze + 一致性提示。'''
+        from codon.utils.lora import has_lora, count_lora
+        cfg = self._lora_cfg
+        if not has_lora(self._model):
+            # 基础权重加载属模型装配职责（脚本在 pipeline 外完成），这里只负责注入
+            self._model = self._model.to(self.device)
+            tm = cfg.target_modules if cfg.target_modules is not None else cfg.target
+            self._model.inject_lora(
+                tm,
+                include=cfg.include,
+                exclude=cfg.exclude,
+                module_exclude=cfg.module_exclude,
+                r=cfg.r,
+                lora_alpha=cfg.lora_alpha,
+                lora_dropout=cfg.lora_dropout,
+                gate=cfg.gate,
+                dora=cfg.dora,
+                gradient_checkpointing=cfg.gradient_checkpointing,
+            )
+        self._model.freeze_backbone()   # 幂等：冻结主干、放开 lora_/dora_ 参数
+        stats = count_lora(self._model)
+        print(f'[*] LoRA 装配: {stats["injected_modules"]} 层, '
+              f'trainable {stats["trainable_params"]:,} params '
+              f'(lora {stats["lora_params"]:,}), rank={stats["ranks"]}')
+
     def setup(self):
+        if self._lora_active:
+            self._assemble_lora()
         self._model = self._model.to(self.device)
         # 总步数 = 各阶段 len(dataset) * epochs（构建调度器需要）
         self._total_steps = sum(len(s.dataset) * s.epochs for s in self._stages)
@@ -310,23 +411,34 @@ class SFTPipeline(BasicPipeline):
         warmup = max(1, min(cfg.warmup_steps, total - 1)) if total > 1 else 1
         eta_min = cfg.lr_min_ratio * cfg.learning_rate
 
-        # bias / LayerNorm 等 1 维参数不 weight decay
-        decay, no_decay = [], []
+        # bias / LayerNorm 等 1 维参数不 weight decay；LoRA 参数独立 lr_multiplier / weight_decay
+        lora_mult = self._lora_cfg.lr_multiplier if self._lora_active else 1.0
+        lora_wd = cfg.weight_decay
+        if self._lora_active and self._lora_cfg.weight_decay is not None:
+            lora_wd = self._lora_cfg.weight_decay
+
+        decay_main, decay_lora, no_decay_main, no_decay_lora = [], [], [], []
         for name, param in self._model.named_parameters():
             if not param.requires_grad:
                 continue
-            if param.ndim <= 1 or 'norm' in name.lower():
-                no_decay.append(param)
-            else:
-                decay.append(param)
+            is_lora = ('lora_' in name or 'dora_' in name)
+            one_d = (param.ndim <= 1 or 'norm' in name.lower())
+            bucket = (no_decay_lora if is_lora else no_decay_main) if one_d else (decay_lora if is_lora else decay_main)
+            bucket.append(param)
 
-        self._optimizer = torch.optim.AdamW(
-            [
-                {'params': decay, 'weight_decay': cfg.weight_decay},
-                {'params': no_decay, 'weight_decay': 0.0},
-            ],
-            lr=cfg.learning_rate,
-        )
+        param_groups = []
+        if decay_main:
+            param_groups.append({'params': decay_main, 'weight_decay': cfg.weight_decay, 'lr': cfg.learning_rate})
+        if decay_lora:
+            param_groups.append({'params': decay_lora, 'weight_decay': lora_wd, 'lr': cfg.learning_rate * lora_mult})
+        if no_decay_main:
+            param_groups.append({'params': no_decay_main, 'weight_decay': 0.0, 'lr': cfg.learning_rate})
+        if no_decay_lora:
+            param_groups.append({'params': no_decay_lora, 'weight_decay': 0.0, 'lr': cfg.learning_rate * lora_mult})
+        if not param_groups:
+            raise RuntimeError('没有任何可训练参数：主干被冻结且未注入 LoRA。请检查 LoRAConfig / 模型冻结状态。')
+
+        self._optimizer = torch.optim.AdamW(param_groups, lr=cfg.learning_rate)
 
         # 与参考脚本一致的 warmup -> cosine（跨阶段统一调度）
         warmup_sched = torch.optim.lr_scheduler.LinearLR(
@@ -391,7 +503,7 @@ class SFTPipeline(BasicPipeline):
                 shift_labels.view(-1),
             )
             if output.aux_loss is not None:
-                loss = loss + output.aux_loss
+                loss = loss + self._aux_weight * output.aux_loss
 
         loss.backward()
         if self._config.grad_clip_norm and self._config.grad_clip_norm > 0:
@@ -405,7 +517,32 @@ class SFTPipeline(BasicPipeline):
         }
 
     # ------------------------------------------------------------ checkpoint
+    def _lora_spec(self) -> Dict[str, Any]:
+        '''序列化 LoRA 注入配置，随 adapter 存档用于一致性提示。'''
+        cfg = self._lora_cfg if self._lora_active else None
+        if cfg is None:
+            return {}
+        tm = cfg.target_modules if cfg.target_modules is not None else cfg.target
+        items = tm if isinstance(tm, (list, tuple)) else [tm]
+        return {
+            'target': [t.__name__ if isinstance(t, type) else str(t) for t in items],
+            'include': list(cfg.include or []),
+            'exclude': list(cfg.exclude or []),
+            'module_exclude': [t.__name__ if isinstance(t, type) else str(t)
+                               for t in (cfg.module_exclude or [])],
+            'r': cfg.r, 'lora_alpha': cfg.lora_alpha,
+            'gate': cfg.gate, 'dora': cfg.dora,
+        }
+
     def state_payload(self):
+        if self._lora_active:
+            from codon.utils.lora import get_lora_state_dict
+            return {
+                'adapter': get_lora_state_dict(self._model),
+                'lora_spec': self._lora_spec(),
+                'optimizer': self._optimizer.state_dict() if self._optimizer is not None else None,
+                'scheduler': self._scheduler.state_dict() if self._scheduler is not None else None,
+            }
         return {
             'model': self._model.state_dict(),
             'optimizer': self._optimizer.state_dict() if self._optimizer is not None else None,
@@ -419,7 +556,21 @@ class SFTPipeline(BasicPipeline):
             self._apply_payload(payload)
 
     def _apply_payload(self, payload):
-        if payload.get('model') is not None:
+        adapter = payload.get('adapter')
+        if adapter is not None:
+            from codon.utils.lora import has_lora
+            if not has_lora(self._model):
+                raise RuntimeError(
+                    'checkpoint 为 LoRA adapter，但模型未注入 LoRA。'
+                    '请设置与存档一致的 lora=LoRAConfig(enabled=True, ...)。')
+            cur = self._model.state_dict()
+            missing = [k for k in adapter if k not in cur]
+            if missing:
+                raise RuntimeError(
+                    f'adapter 与当前模型结构不匹配，缺失 key {missing[:6]}。'
+                    f'请保持 LoRA 注入配置一致；存档 spec={payload.get("lora_spec")}')
+            self._model.load_state_dict(adapter, strict=False)
+        elif payload.get('model') is not None:
             self._model.load_state_dict(payload['model'])
         if self._optimizer is not None and payload.get('optimizer') is not None:
             self._optimizer.load_state_dict(payload['optimizer'])
@@ -465,6 +616,23 @@ class SFTPipeline(BasicPipeline):
             eval_dataset=eval_dataset,
             resume_from=resume_from,
         )
+
+    # ------------------------------------------------------------ stage / final 导出
+    def save_stage(self, stage: SFTStage) -> None:
+        '''阶段完成权重导出。
+        LoRA 模式默认 adapter-only（save_lora 为主）；save_merged=True 时额外 merge 后
+        导出全量到 stage.ckpt 并立即 unmerge，保持训练态不中断。'''
+        if self._lora_active:
+            if self._lora_cfg.save_merged:
+                self._model.merge_lora()
+                try:
+                    self._model.save_pretrained(stage.ckpt)
+                finally:
+                    self._model.unmerge_lora()
+            else:
+                self._model.save_lora(stage.ckpt)
+        else:
+            self._model.save_pretrained(stage.ckpt)
 
     # ------------------------------------------------------------ 兜底保存 / 清理
     def _exit_safety_save(self):

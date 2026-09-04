@@ -87,13 +87,24 @@ def run_chat_turn(
         prompt_tensor = torch.tensor([prompt_ids], dtype=torch.long, device=device)
 
         eos_id = tokenizer.token_to_id(eos_token)
+        if eos_id is None:   # A2 尖括号词表：把方括号默认名映射到 <|...|> 等价 token
+            alt = {
+                '[im_end]': '<|im_end|>', '[im_start]': '<|im_start|>',
+                '[cot_start]': '<|thought_start|>', '[cot_end]': '<|thought_end|>',
+                '[pad]': '<|pad|>',
+            }.get(eos_token)
+            eos_id = tokenizer.token_to_id(alt) if alt else None
 
+        sampler = None
+        if top_k is not None:   # CausalLanguageModel.generate 无 top_k 参数，改用 sampler
+            from codon.model.sampler import Sampler
+            sampler = Sampler(temperature=temperature, top_k=top_k)
         with torch.no_grad():
             generated = model_instance.generate(
                 prompt_tensor,
                 max_new_tokens=max_new_tokens,
                 temperature=temperature,
-                top_k=top_k,
+                sampler=sampler,
                 eos_token_id=eos_id,
             )
 

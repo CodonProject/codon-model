@@ -216,8 +216,9 @@ class MoE(BasicModel):
 
         shared_output = torch.zeros_like(x_flat)
         if self.shared_experts is not None:
-            for expert in self.shared_experts: shared_output = shared_output + expert(x_flat)
-        
+            for expert in self.shared_experts:
+                shared_output = shared_output + expert(x_flat).to(x_flat.dtype)
+
         # logits: [Total_Tokens, Num_Experts]
         router_logits = self.gate(x_flat)
         routing_probs = F.softmax(router_logits, dim=-1)
@@ -231,23 +232,24 @@ class MoE(BasicModel):
         aux_loss = None
         if self.use_aux_loss and self.training:
             density_1 = routing_probs.mean(dim=0)
-            
+
             mask = torch.zeros_like(routing_probs)
             mask.scatter_(1, topk_indices, 1.0)
             density_1_proxy = mask.mean(dim=0)
-            
+
             aux_loss = (self.num_experts * (density_1 * density_1_proxy).sum())
 
-        routed_output = torch.zeros_like(x_flat)
+        # 统一到 x 的 dtype，避免 autocast/LoRA 混合精度下 index_add_ 目标/源 dtype 不一致
+        routed_output = torch.zeros_like(x_flat, dtype=x_flat.dtype)
         for i, expert in enumerate(self.experts):
             batch_idx, nth_choice = torch.where(topk_indices == i)
-            
+
             if batch_idx.numel() == 0: continue
             # [Num_Selected, Model_Dim]
             current_inputs = x_flat[batch_idx]
-            current_expert_output = expert(current_inputs)
+            current_expert_output = expert(current_inputs).to(x_flat.dtype)
             # [Num_Selected, 1]
-            current_weights = topk_weights[batch_idx, nth_choice].unsqueeze(-1)
+            current_weights = topk_weights[batch_idx, nth_choice].to(x_flat.dtype).unsqueeze(-1)
             routed_output.index_add_(0, batch_idx, current_expert_output * current_weights)
             
         final_output = routed_output + shared_output

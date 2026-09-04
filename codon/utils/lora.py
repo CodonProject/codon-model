@@ -45,9 +45,29 @@ def _get_submodule(model: nn.Module, target_path: str) -> Tuple[nn.Module, str, 
     return parent, child_name, child
 
 
+# 内置 LoRA 目标族：target_modules 传族名即可展开成 (types, include, exclude)
+_LORA_FAMILIES: Dict[str, Tuple[list, list, list]] = {
+    # 全部 nn.Linear（不含额外的 exclude 时即旧行为）
+    'all-linear': ([nn.Linear], [], []),
+    # attention 内的投影线性层
+    'attn': ([nn.Linear], ['.attn.'], []),
+    # MoE 前馈（expert + shared expert，默认不含 router moe.gate）
+    'mlp': ([nn.Linear], ['.moe.'], ['moe.gate']),
+    # 仅各专家 / 共享专家的 MLP
+    'expert': ([nn.Linear], ['.moe.experts.', '.moe.shared_experts'], []),
+    # attention 各投影 + 相关压缩投影
+    'qkv': ([nn.Linear], ['q_proj', 'k_proj', 'v_proj', 'o_proj', 'g_proj',
+                          'q_a_proj', 'q_b_proj', 'kv_a_proj', 'kv_b_proj', 'k_p_proj'], []),
+}
+
+
 def inject(
     model: nn.Module,
-    target_modules: Union[str, Type[nn.Module], List[Union[str, Type[nn.Module]]]],
+    target_modules: Union[str, Type[nn.Module], List[Union[str, Type[nn.Module]]]] = None,
+    *,
+    include: Optional[list] = None,
+    exclude: Optional[list] = None,
+    module_exclude: Optional[list] = None,
     r: int = 8,
     lora_alpha: int = 16,
     lora_dropout: float = 0.05,
@@ -56,29 +76,66 @@ def inject(
     dora: bool = False,
     gradient_checkpointing: bool = False
 ) -> nn.Module:
+    '''
+    向模型注入 LoRA。
+
+    target_modules:
+        - 族名（'all-linear' / 'attn' / 'mlp' / 'expert' / 'qkv'）见 _LORA_FAMILIES；
+        - nn.Module 类型或具体名字（旧语义，ends_with/== 匹配）；
+        - 可混成 list。
+      缺省 = 'all-linear'。
+
+    include    : list[str]，模块路径须含任一片段才注入（与类型/族叠加）。
+    exclude    : list[str]，模块路径含任一片段则跳过。
+    module_exclude: list[str | type | nn.Module]，按路径子串/类型/实例排除整模块。
+    '''
     orig = getattr(model, 'original_model', model)
-    targets_to_replace = []
-    
+
+    if target_modules is None:
+        target_modules = ['all-linear']
     if isinstance(target_modules, (str, type)):
         target_modules = [target_modules]
-        
-    str_targets = [t for t in target_modules if isinstance(t, str)]
-    type_targets = [t for t in target_modules if isinstance(t, type)]
-    
+
+    fam_targets: list = []
+    fam_include: list = []
+    fam_exclude: list = []
+    for t in target_modules:
+        if isinstance(t, str) and t in _LORA_FAMILIES:
+            tt, ti, te = _LORA_FAMILIES[t]
+            fam_targets += tt; fam_include += ti; fam_exclude += te
+        else:
+            fam_targets.append(t)
+
+    inc = list(include or []) + fam_include
+    exc = list(exclude or []) + fam_exclude
+
+    me_types: tuple = tuple(t for t in (module_exclude or []) if isinstance(t, type))
+    me_inst: set = set(t for t in (module_exclude or []) if not isinstance(t, type) and not isinstance(t, str))
+    for t in (module_exclude or []):
+        if isinstance(t, str):
+            exc.append(t)
+
+    str_targets = [t for t in fam_targets if isinstance(t, str)]
+    type_targets = [t for t in fam_targets if isinstance(t, type)]
+
+    targets_to_replace = []
     for name, module in orig.named_modules():
         if name == '': continue
-        
+
         module_orig = getattr(module, 'original_model', module)
+        if me_inst and (module_orig in me_inst or module in me_inst): continue
+        if me_types and isinstance(module_orig, me_types): continue
+        if exc and any(e in name for e in exc): continue
+
         is_target = False
-        
         if str_targets and any(name.endswith(t) or name == t for t in str_targets):
             is_target = True
-            
         elif type_targets and any(isinstance(module_orig, t) for t in type_targets):
             is_target = True
-                
-        if is_target:
-            targets_to_replace.append(name)
+
+        if not is_target: continue
+        if inc and not any(i in name for i in inc): continue
+        targets_to_replace.append(name)
 
     for target_path in targets_to_replace:
         parent, child_name, child = _get_submodule(orig, target_path)
@@ -255,9 +312,51 @@ def get_lora_state_dict(model: nn.Module) -> Dict[str, torch.Tensor]:
     orig = getattr(model, 'original_model', model)
     state_dict = orig.state_dict()  # 修复了缺少圆括号的 Bug
     lora_state_dict = {
-        k: v for k, v in state_dict.items() 
-        if any(kw in k for kw in ['lora_', 'dora_']) 
-        and 'original_layer' not in k 
+        k: v for k, v in state_dict.items()
+        if any(kw in k for kw in ['lora_', 'dora_'])
+        and 'original_layer' not in k
         and 'weight_backup' not in k
     }
     return lora_state_dict
+
+
+def _iter_lora(orig: nn.Module):
+    from codon.block.lora import BasicLoRA
+    for module in orig.modules():
+        if isinstance(module, BasicLoRA):
+            yield module
+
+
+def has_lora(model: nn.Module) -> bool:
+    '''模型是否已注入 LoRA（存在 BasicLoRA wrapper）。'''
+    orig = getattr(model, 'original_model', model)
+    for _ in _iter_lora(orig):
+        return True
+    return False
+
+
+def count_lora(model: nn.Module) -> Dict[str, Any]:
+    '''统计注入情况：注入层数 / 可训练参数 / 总参数量 / rank 分布。'''
+    orig = getattr(model, 'original_model', model)
+    modules = list(_iter_lora(orig))
+    ranks: set = set()
+    gated = dora = 0
+    for m in modules:
+        if getattr(m, 'r', 0) > 0: ranks.add(getattr(m, 'r'))
+        if getattr(m, 'gate', False): gated += 1
+        if getattr(m, 'dora', False): dora += 1
+
+    trainable_params = sum(p.numel() for p in orig.parameters() if p.requires_grad)
+    lora_params = sum(
+        p.numel() for m in modules
+        for _, p in m.named_parameters(recurse=False)
+        if any(kw in _ for kw in ['lora_', 'dora_'])
+    )
+    return {
+        'injected_modules': len(modules),
+        'ranks': sorted(ranks),
+        'gated': gated,
+        'dora': dora,
+        'trainable_params': trainable_params,
+        'lora_params': lora_params,
+    }

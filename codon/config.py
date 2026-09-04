@@ -6,6 +6,11 @@ import hashlib
 import typing as _tp
 from typing import Dict, Set, Any, Union, Callable, Optional
 
+try:  # Python >= 3.11 内置；旧解释器退回 typing_extensions
+    from typing import dataclass_transform
+except ImportError:
+    from typing_extensions import dataclass_transform
+
 try:
     import yaml
 except ImportError:
@@ -503,6 +508,7 @@ class BasicConfig:
 
 
 # @configclass decorator
+@dataclass_transform(field_specifiers=(field,))
 def configclass(cls: type) -> type:
     """
     把带注解的类转成类型化 BasicConfig 子类。

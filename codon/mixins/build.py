@@ -1,5 +1,5 @@
 import torch.nn as nn
-from typing import List, Type, Union
+from typing import List, Optional, Type, Union
 
 from codon.mixins._types import TModule
 
@@ -7,7 +7,11 @@ from codon.mixins._types import TModule
 class BuildMixin:
     def inject_lora(
         self: TModule,
-        target_modules: Union[str, Type[nn.Module], List[Union[str, Type[nn.Module]]]],
+        target_modules: Union[str, Type[nn.Module], List[Union[str, Type[nn.Module]]]] = None,
+        *,
+        include: Optional[list] = None,
+        exclude: Optional[list] = None,
+        module_exclude: Optional[list] = None,
         r: int = 8,
         lora_alpha: int = 16,
         lora_dropout: float = 0.05,
@@ -20,6 +24,9 @@ class BuildMixin:
         inject(
             self,
             target_modules=target_modules,
+            include=include,
+            exclude=exclude,
+            module_exclude=module_exclude,
             r=r,
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
