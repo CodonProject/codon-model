@@ -74,7 +74,8 @@ class SFTConfig:
     stage_specs: List[Dict[str, Any]] = field(default_factory=list)  # [{name, folder, epochs, ckpt}, ...]
     pad_length: int = field(default=2048)
     batch_size: int = field(default=8)
-    dataset_kwargs: Dict[str, Any] = field(default_factory=dict)     # 透传 MotifSFT：two_turn_prob/three_turn_prob/system_prompts/pattern/recursive/seed
+    dataset_cls: Optional[type] = field(default=None)                # None=CodonSFT（默认）；显式传 MotifSFT 回旧行为
+    dataset_kwargs: Dict[str, Any] = field(default_factory=dict)     # 透传数据集类：two_turn_prob/three_turn_prob/system_prompts/pattern/recursive/seed
 
 
 def _coerce_lora_config(lora: Any) -> Optional[LoRAConfig]:
@@ -100,12 +101,15 @@ class SFTStage:
     ckpt: Optional[str] = None      # 阶段结束 save_pretrained 到该路径
 
 
-def build_sft_stages(stage_specs, tokenizer, pad_length, batch_size, **ds_kwargs):
-    '''stage_specs: [{name, folder, epochs, ckpt}, ...] -> List[SFTStage]'''
-    from codon.motif.data import MotifSFT
+def build_sft_stages(stage_specs, tokenizer, pad_length, batch_size, dataset_cls=None, **ds_kwargs):
+    '''stage_specs: [{name, folder, epochs, ckpt}, ...] -> List[SFTStage]
+    dataset_cls: 数据集类，默认 codon.utils.data.sft.CodonSFT（自动识别 MotifSFT 行 /
+    session / messages / parquet 等混合格式）；显式传 codon.motif.data.MotifSFT 回到旧行为。'''
+    from codon.utils.data.sft import CodonSFT
+    cls = dataset_cls or CodonSFT
     stages = []
     for s in stage_specs:
-        ds = MotifSFT(
+        ds = cls(
             folder=s['folder'],
             tokenizer=tokenizer,
             pad_length=pad_length,
@@ -336,7 +340,8 @@ class SFTPipeline(BasicPipeline):
         ds_kwargs = dict(cfg.dataset_kwargs or {})
         return build_sft_stages(
             specs, self._tokenizer,
-            pad_length=cfg.pad_length, batch_size=cfg.batch_size, **ds_kwargs,
+            pad_length=cfg.pad_length, batch_size=cfg.batch_size,
+            dataset_cls=cfg.dataset_cls, **ds_kwargs,
         )
 
     # ------------------------------------------------------------ 属性

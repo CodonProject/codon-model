@@ -9,6 +9,7 @@ from .base import (
     CodonDataset, CodonIterableDataset,
     TorchDatasetWrapper, TorchIterableDatasetWrapper
 )
+from .sft import CodonSFT
 
 __all__ = [
     'CodonDataset',
@@ -17,6 +18,7 @@ __all__ = [
     'Stateful',
     'TorchDatasetWrapper',
     'TorchIterableDatasetWrapper',
+    'CodonSFT',
     'FlatDataset',
     'FlatColumnDataset',
     'MappedFlatDataset',

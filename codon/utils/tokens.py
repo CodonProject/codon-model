@@ -139,6 +139,26 @@ class PackedTokenizer(RemoteResourceMixin):
         self._update_fast_tokenizer()
         return self
 
+    def set_eos(self, eos: str) -> bool:
+        if self._tokenizer.token_to_id(eos) is not None:
+            self.config['eos_token'] = eos
+            return True
+        return False
+
+    @property
+    def token_eos(self) -> Optional[str]:
+        return self.config.get('eos_token', None)
+
+    def set_pad(self, pad: str) -> bool:
+        if self._tokenizer.token_to_id(pad) is not None:
+            self.config['pad_token'] = pad
+            return True
+        return False
+
+    @property
+    def token_pad(self) -> Optional[str]:
+        return self.config.get('pad_token', None)
+
     @property
     def tokenizer(self) -> Tokenizer:
         if self._tokenizer is None:

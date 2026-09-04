@@ -142,7 +142,7 @@
         {{- '<|im_end|>' -}}
     {%- elif message.role in ['assistant', 'model'] -%}
         {{- '<|im_start|><|model|>' -}}
-        {%- set thought_content = message.thought | default(message.reasoning_content) | default('') -%}
+        {%- set thought_content = (message.thought if message.thought is not none else message.reasoning_content) | default('', true) -%}
         {%- set content = message.content -%}
         {%- if not thought_content | trim and content is string and '</think>' in content and (content | trim).startswith('<think>') and split_think -%}
             {%- set thought_content = content.split('</think>')[0].strip().split('<think>')[-1].strip() -%}

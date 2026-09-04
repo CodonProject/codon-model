@@ -85,8 +85,8 @@ class DPOConfig:
     )
 
     # --- Special tokens ---
-    pad_token_str: str = '[pad]'
-    eos_token_str: str = '[im_end]'
+    pad_token_str: str = '<|pad|>'
+    eos_token_str: str = '<|im_end|>'
 
     def __post_init__(self):
         """Cross-field constraints."""
