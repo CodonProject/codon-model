@@ -30,7 +30,7 @@ os.environ['PYTHONIOENCODING'] = 'utf-8'
 sys.stdout.reconfigure(encoding='utf-8')
 
 
-__version__ = '0.0.7b5'
+__version__ = '0.0.7b6'
 
 __seed__: int | None = None
 
