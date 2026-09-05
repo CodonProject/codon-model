@@ -1,4 +1,5 @@
 from .attention import AttentionOutput, MultiHeadAttention, MultiHeadAttentionKEV
+from .attention_residuals import AttnResState, AttnResOutput, AttnResWrapper
 from .codebook import LookupFreeQuantization, LookupFreeQuantizationOutput
 from .conv import (
     CausalConv1d,
@@ -44,6 +45,10 @@ __all__ = [
     'AttentionOutput',
     'MultiHeadAttention',
     'MultiHeadAttentionKEV',
+    # attention_residuals
+    'AttnResState',
+    'AttnResOutput',
+    'AttnResWrapper',
     # codebook
     'LookupFreeQuantization',
     'LookupFreeQuantizationOutput',

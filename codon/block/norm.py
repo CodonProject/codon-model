@@ -3,9 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
-def _is_exporting() -> bool:
-    return torch.jit.is_tracing() or torch.onnx.is_in_onnx_export()
+from codon.ops import is_exporting
 
 
 def _reshape_parameter(param: torch.Tensor, ndim: int, channel_first: bool) -> torch.Tensor:
@@ -134,7 +132,7 @@ class RMSNorm(BasicModel):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         dim = 1 if self.channel_first else -1
         
-        if _is_exporting():
+        if is_exporting():
             orig_dtype = x.dtype
             x_f32 = x.float()
             rms = torch.rsqrt(x_f32.pow(2).mean(dim=dim, keepdim=True) + self.eps)
@@ -162,7 +160,7 @@ class ZCRMSNorm(BasicModel):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         dim = 1 if self.channel_first else -1
         
-        if _is_exporting():
+        if is_exporting():
             orig_dtype = x.dtype
             x_f32 = x.float()
             rms = torch.rsqrt(x_f32.pow(2).mean(dim=dim, keepdim=True) + self.eps)
@@ -185,7 +183,7 @@ class LayerNorm(BasicModel):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         dim = 1 if self.channel_first else -1
         
-        if not self.channel_first and not _is_exporting():
+        if not self.channel_first and not is_exporting():
             return F.layer_norm(x, (x.size(-1),), self.weight, self.bias, self.eps)
             
         orig_dtype = x.dtype
@@ -257,7 +255,7 @@ class L1RMSNorm(BasicModel):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         dim = 1 if self.channel_first else -1
         
-        if _is_exporting():
+        if is_exporting():
             orig_dtype = x.dtype
             x_f32 = x.float()
             mean_abs = x_f32.abs().mean(dim=dim, keepdim=True)
@@ -447,7 +445,7 @@ class ExportableSpectralNorm(BasicModel):
         weight_orig = getattr(self, self.name + "_orig")
         weight_mat = weight_orig.view(weight_orig.size(0), -1)
         
-        if self.training or _is_exporting():
+        if self.training or is_exporting():
             u, v = self._power_iteration(weight_mat)
         else:
             u = self.u

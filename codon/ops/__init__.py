@@ -1,4 +1,5 @@
 from .tensor_utils import prepare_input_tensor
+from .meta import is_exporting
 from .filters import gaussian_blur_2d, compute_image_gradients, get_gaussian_kernel_2d
 from .color import rgb_to_gray, rgb_to_lab
 from .nms import nms_2d_suppression, nms_2d_peaks
@@ -53,6 +54,8 @@ from .clustering import (
 __all__ = [
     # tensor_utils
     'prepare_input_tensor',
+    # meta
+    'is_exporting',
     # filters
     'get_gaussian_kernel_2d',
     'gaussian_blur_2d',

@@ -1,13 +1,21 @@
 from codon import *
 import inspect
 
-
-def _is_exporting() -> bool:
-    return torch.jit.is_tracing() or torch.onnx.is_in_onnx_export()
+from codon.ops import is_exporting
+from codon.ops.activation import (
+    _ELU,
+    _GELU,
+    _LogSigmoid,
+    _Mish,
+    _Sigmoid,
+    _SiLU,
+    _Softplus,
+    _Tanh,
+)
 
 
 def _safe_product(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-    if not _is_exporting() and a.dtype == torch.float16:
+    if not is_exporting() and a.dtype == torch.float16:
         a_min, a_max = torch.aminmax(a.detach())
         b_min, b_max = torch.aminmax(b.detach())
         max_abs_a = torch.max(-a_min, a_max).float()
@@ -21,156 +29,32 @@ def _safe_product(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     return a * b
 
 
-# 1. 自定义 Autograd 算子 (显存优化 & FP16 稳定)
-
-class _SiLU(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, x):
-        ctx.save_for_backward(x)
-        return x * torch.sigmoid(x)
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        x, = ctx.saved_tensors
-        sigmoid_x = torch.sigmoid(x)
-        grad_input = grad_output * sigmoid_x * (1.0 + x * (1.0 - sigmoid_x))
-        return grad_input
-
-
-class _GELU(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, x):
-        ctx.save_for_backward(x)
-        return F.gelu(x)
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        x, = ctx.saved_tensors
-        cdf = 0.5 * (1.0 + torch.erf(x * 0.7071067811865475))
-        pdf = 0.3989422804014327 * torch.exp(-0.5 * x * x)
-        grad_input = grad_output * (cdf + x * pdf)
-        return grad_input
-
-
-class _Sigmoid(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, x):
-        y = torch.sigmoid(x)
-        ctx.save_for_backward(y)
-        return y
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        y, = ctx.saved_tensors
-        return grad_output * y * (1.0 - y)
-
-
-class _Tanh(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, x):
-        y = torch.tanh(x)
-        ctx.save_for_backward(y)
-        return y
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        y, = ctx.saved_tensors
-        return grad_output * (1.0 - y * y)
-
-
-class _ELU(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, x, alpha):
-        ctx.alpha = alpha
-        y = F.elu(x, alpha)
-        ctx.save_for_backward(y)
-        return y
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        y, = ctx.saved_tensors
-        alpha = ctx.alpha
-        # dy/dx = 1 (if y > 0) else y + alpha
-        grad_input = torch.where(y > 0.0, grad_output, grad_output * (y + alpha))
-        return grad_input, None
-
-
-class _Softplus(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, x, beta, threshold):
-        ctx.beta = beta
-        y = F.softplus(x, beta, threshold)
-        ctx.save_for_backward(y)
-        return y
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        y, = ctx.saved_tensors
-        beta = ctx.beta
-        # dy/dx = 1 - exp(-beta * y)
-        grad_input = grad_output * (1.0 - torch.exp(-beta * y))
-        return grad_input, None, None
-
-
-class _LogSigmoid(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, x):
-        y = F.logsigmoid(x)
-        ctx.save_for_backward(y)
-        return y
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        y, = ctx.saved_tensors
-        # dy/dx = 1 - exp(y)
-        return grad_output * (1.0 - torch.exp(y))
-
-
-class _Mish(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, x):
-        ctx.save_for_backward(x)
-        is_large = x > 20
-        softplus = torch.where(is_large, x, torch.log1p(torch.exp(x.clamp(max=20))))
-        return x * torch.tanh(softplus)
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        x, = ctx.saved_tensors
-        is_large = x > 20
-        sp = torch.where(is_large, x, torch.log1p(torch.exp(x.clamp(max=20))))
-        t = torch.tanh(sp)
-        sig = torch.sigmoid(x)
-        grad_input = grad_output * (t + x * sig * (1.0 - t * t))
-        return grad_input
-
-
 # 2. 优化后的标准激活函数模块
 
 class SiLU(BasicModel):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if _is_exporting():
+        if is_exporting():
             return x * torch.sigmoid(x)
         return _SiLU.apply(x)
 
 
 class GELU(BasicModel):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if _is_exporting():
+        if is_exporting():
             return F.gelu(x)
         return _GELU.apply(x)
 
 
 class Sigmoid(BasicModel):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if _is_exporting():
+        if is_exporting():
             return torch.sigmoid(x)
         return _Sigmoid.apply(x)
 
 
 class Tanh(BasicModel):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if _is_exporting():
+        if is_exporting():
             return torch.tanh(x)
         return _Tanh.apply(x)
 
@@ -181,7 +65,7 @@ class ELU(BasicModel):
         self.alpha = alpha
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if _is_exporting():
+        if is_exporting():
             return F.elu(x, self.alpha)
         return _ELU.apply(x, self.alpha)
 
@@ -192,7 +76,7 @@ class CELU(BasicModel):
         self.alpha = alpha
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if _is_exporting():
+        if is_exporting():
             return F.celu(x, self.alpha)
         # CELU(x) = ELU(x / alpha) * alpha
         return _ELU.apply(x / self.alpha, 1.0) * self.alpha
@@ -200,7 +84,7 @@ class CELU(BasicModel):
 
 class SELU(BasicModel):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if _is_exporting():
+        if is_exporting():
             return F.selu(x)
         # SELU 是 Scale * ELU
         scale = 1.0507009873554805
@@ -215,21 +99,21 @@ class Softplus(BasicModel):
         self.threshold = threshold
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if _is_exporting():
+        if is_exporting():
             return F.softplus(x, self.beta, self.threshold)
         return _Softplus.apply(x, self.beta, self.threshold)
 
 
 class LogSigmoid(BasicModel):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if _is_exporting():
+        if is_exporting():
             return F.logsigmoid(x)
         return _LogSigmoid.apply(x)
 
 
 class Mish(BasicModel):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if _is_exporting():
+        if is_exporting():
             return x * torch.tanh(F.softplus(x))
         return _Mish.apply(x)
 
@@ -242,7 +126,7 @@ class Softmax(BasicModel):
         self.dim = dim
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if _is_exporting():
+        if is_exporting():
             return F.softmax(x, dim=self.dim)
         if x.dtype in (torch.float16, torch.bfloat16):
             return F.softmax(x.float(), dim=self.dim).to(dtype=x.dtype)
@@ -255,7 +139,7 @@ class Softmin(BasicModel):
         self.dim = dim
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if _is_exporting():
+        if is_exporting():
             return F.softmin(x, dim=self.dim)
         if x.dtype in (torch.float16, torch.bfloat16):
             return F.softmin(x.float(), dim=self.dim).to(dtype=x.dtype)
@@ -268,7 +152,7 @@ class LogSoftmax(BasicModel):
         self.dim = dim
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if _is_exporting():
+        if is_exporting():
             return F.log_softmax(x, dim=self.dim)
         if x.dtype in (torch.float16, torch.bfloat16):
             return F.log_softmax(x.float(), dim=self.dim).to(dtype=x.dtype)
@@ -277,7 +161,7 @@ class LogSoftmax(BasicModel):
 
 class Softmax2d(BasicModel):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if _is_exporting():
+        if is_exporting():
             return F.softmax(x, dim=1)
         if x.dtype in (torch.float16, torch.bfloat16):
             return F.softmax(x.float(), dim=1).to(dtype=x.dtype)
@@ -290,7 +174,7 @@ class Hardshrink(BasicModel):
         self.lambd = lambd
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if _is_exporting():
+        if is_exporting():
             mask = (x > self.lambd) | (x < -self.lambd)
             return x * mask.to(x.dtype)
         return F.hardshrink(x, self.lambd)
@@ -302,7 +186,7 @@ class Softshrink(BasicModel):
         self.lambd = lambd
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if _is_exporting():
+        if is_exporting():
             return torch.sign(x) * torch.clamp(x.abs() - self.lambd, min=0)
         return F.softshrink(x, self.lambd)
 
@@ -332,7 +216,7 @@ class PReLU(BasicModel):
         self.weight = nn.Parameter(torch.empty(num_parameters).fill_(init))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if _is_exporting():
+        if is_exporting():
             weight = self.weight
             if x.ndim == 4 and weight.numel() > 1:
                 weight = weight.view(1, -1, 1, 1)
@@ -349,7 +233,7 @@ class RReLU(BasicModel):
         self.upper = upper
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if _is_exporting() or not self.training:
+        if is_exporting() or not self.training:
             return F.leaky_relu(x, (self.lower + self.upper) / 2.0)
         return F.rrelu(x, self.lower, self.upper, training=True)
 
@@ -366,7 +250,7 @@ class ReLU6(BasicModel):
 
 class Softsign(BasicModel):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if _is_exporting():
+        if is_exporting():
             return x / (1.0 + x.abs())
         return F.softsign(x)
 
@@ -383,7 +267,7 @@ class Threshold(BasicModel):
         self.value = value
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if _is_exporting():
+        if is_exporting():
             return torch.where(x > self.threshold, x, torch.tensor(self.value, dtype=x.dtype, device=x.device))
         return F.threshold(x, self.threshold, self.value)
 
