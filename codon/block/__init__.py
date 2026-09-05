@@ -11,9 +11,11 @@ from .conv import (
 from .embedding import (
     BasicEmbedding,
     BasicRotaryEmbedding,
+    FourierRotaryEmbedding,
     InterleavedRotaryEmbedding,
     RotaryEmbedding,
     SinusoidalEmbedding,
+    fope_sigma,
 )
 from .film import FiLM, FiLMOutput
 from .fusion import (
@@ -61,9 +63,12 @@ __all__ = [
     # embedding
     'BasicEmbedding',
     'BasicRotaryEmbedding',
+    'FourierRotaryEmbedding',
     'InterleavedRotaryEmbedding',
     'RotaryEmbedding',
     'SinusoidalEmbedding',
+    # embedding helper
+    'fope_sigma',
     # film
     'FiLM',
     'FiLMOutput',

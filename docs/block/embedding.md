@@ -125,6 +125,76 @@ print(f"Output shape: {output.shape}")  # [2, 12, 64, 64]
 
 ---
 
+### FourierRotaryEmbedding (FoPE)
+
+Fourier Position Embedding (FoPE, Hua et al. ICML 2025, arXiv:2412.17739) — a drop-in RoPE replacement
+for length generalization. Two sub-methods:
+
+1. **Fourier Series (FS)**: every adequately-trained rotary dimension becomes a Fourier series whose
+   dominant term is its original frequency plus weaker harmonic terms (std `sigma`) drawn from the other
+   adequately-trained frequencies.
+2. **Clip-to-Floor (CF)**: frequencies that never complete a full cycle inside the training window
+   (period > `train_len`) are under-trained; they are replaced by the zero-frequency component
+   (position-invariant), which carries no positional bias and extrapolates cleanly.
+
+The class reuses `RotaryEmbedding.forward` and only rewrites the cached cos/sin tables, so position
+indexing and KV-cache paths are unchanged. Coefficients are frozen and shared across heads/layers
+(GQA-safe: query heads outnumber KV heads in this codebase). All buffers are non-persistent, so swapping
+it in does **not** change `state_dict` keys.
+
+Both sub-methods are independently reachable: `sigma=0.0` + `train_len=None` -> plain RoPE;
+`sigma=0.0` + `train_len` -> CF only; `sigma>0` + `train_len=None` -> FS only; both set -> full FoPE.
+
+#### Constructor
+
+```python
+FourierRotaryEmbedding(
+    model_dim: int,
+    max_len: int = 131072,
+    base: int = 500000,
+    sigma: Optional[float] = None,
+    train_len: Optional[int] = None,
+    num_params: Optional[float] = None
+)
+```
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| model_dim | int | - | The dimension of the model (or head_dim), must be even |
+| max_len | int | 131072 | Maximum sequence length for the position cache |
+| base | int | 500000 | Base for computing frequencies |
+| sigma | float/None | None | Std of the Fourier-series harmonic coefficients (Var_Freq σ). `None` derives it from `num_params` via `fope_sigma` (log10 fit of the paper's Table 3), falling back to 0.3 if neither is given |
+| train_len | int/None | None | Pre-training window for the floor clip (CF); `None` disables it |
+| num_params | float/None | None | Model parameter count, used to fit `sigma` by scale when `sigma` is not given |
+
+The module-level helper `fope_sigma(num_params)` exposes the same heuristic:
+piecewise-linear interpolation in `log10(params)` through the paper anchors
+`(60M, 0.3)`, `(180M, 0.4)`, `(1.2B, 0.6)`, clamped outside that range. This is an
+empirical fit, not a paper formula — treat it as an initialization and re-tune.
+
+#### Example Usage
+
+```python
+import torch
+from codon.block import FourierRotaryEmbedding, fope_sigma
+
+# Full FoPE: Fourier series + floor clip to a 2048-token training window.
+# sigma auto-fitted from the model's ~105M parameter count (~0.351).
+fope = FourierRotaryEmbedding(model_dim=64, num_params=105_410_304, train_len=2048)
+print(fope.sigma)  # ~0.351
+
+# Manual sigma always wins over num_params:
+fope_cf = FourierRotaryEmbedding(model_dim=64, sigma=0.0, num_params=105_410_304, train_len=2048)
+
+x = torch.randn(2, 12, 32, 64)  # [Batch, Heads, Seq_Len, Head_Dim]
+output = fope(x, start_pos=0)
+print(f"Output shape: {output.shape}")  # [2, 12, 32, 64]
+```
+
+---
+
 ### InterleavedRotaryEmbedding
 
 Interleaved Multimodal Rotary Positional Embedding (MRoPE-Interleave).
