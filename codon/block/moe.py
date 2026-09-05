@@ -130,33 +130,34 @@ class MoE(BasicModel):
                 **kwargs
             )
 
+        # active 口径 = 单次前向实际参与计算的参数：gate 与 shared_experts 处理全部 token
+        # （整组计入），routed 专家每个 token 只激活 top_k 个。它衡量算力占用，与
+        # requires_grad / lora 记账正交，故此处统一忽略 trainable_only/lora_only 过滤。
         total = self._count_params_recursive(
             self.gate,
-            trainable_only=trainable_only,
-            active_only=active_only,
-            lora_only=lora_only,
+            trainable_only=False,
+            active_only=True,
+            lora_only=False,
             seen=seen
         )
 
         if self.shared_experts is not None:
             total += self._count_params_recursive(
                 self.shared_experts,
-                trainable_only=trainable_only,
-                active_only=active_only,
-                lora_only=lora_only,
+                trainable_only=False,
+                active_only=True,
+                lora_only=False,
                 seen=seen
             )
 
         if len(self.experts) > 0:
             single_expert_params = self.experts[0].count_params(
-                trainable_only=trainable_only,
+                trainable_only=False,
                 active_only=False,
-                lora_only=lora_only,
+                lora_only=False,
                 human_readable=False,
                 seen=seen
             )
-            if isinstance(single_expert_params, str):
-                single_expert_params = 0
             total += single_expert_params * self.top_k
 
         if human_readable:
