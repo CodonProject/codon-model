@@ -14,7 +14,7 @@ from codon.model.cache import (
 )
 
 
-class MultiHeadAttention(BasicModel):
+class MultiHeadAttentionLegacy(BasicModel):
     ''' 
     Multi-Head Attention module.
     Supports:
@@ -52,7 +52,7 @@ class MultiHeadAttention(BasicModel):
         # Triton ops switch
         use_triton: bool = False,
     ):
-        super(MultiHeadAttention, self).__init__()
+        super(MultiHeadAttentionLegacy, self).__init__()
         if num_kv_heads is None: num_kv_heads = num_heads
         assert hidden_size % num_heads == 0
         assert num_heads % num_kv_heads == 0

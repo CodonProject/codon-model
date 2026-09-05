@@ -6,7 +6,7 @@ sys.path.insert(0, project_root)
 
 import unittest
 import torch
-from codon.block.attention import MultiHeadAttention
+from codon.block.attention import MultiHeadAttention, MultiHeadAttentionLegacy
 from codon.model.cache import (
     build_cache,
     KVLayerCache,
@@ -29,9 +29,9 @@ class TestMultiHeadAttention(unittest.TestCase):
         self.x = torch.randn(self.batch_size, self.seq_len, self.hidden_size, device=self.device)
 
     def test_mutex_hca_csa_error(self):
-        """测试 HCA 和 CSA 的互斥抛错"""
+        """测试 HCA 和 CSA 的互斥抛错（legacy 多机制类）"""
         with self.assertRaises(AssertionError):
-            MultiHeadAttention(
+            MultiHeadAttentionLegacy(
                 hidden_size=self.hidden_size,
                 num_heads=self.num_heads,
                 use_hca=True,
@@ -61,8 +61,8 @@ class TestMultiHeadAttention(unittest.TestCase):
         self.assertEqual(cache.seq_length, self.seq_len + 1)
 
     def test_mla_attention(self):
-        """测试 MLA 机制与 TensorLayerCache"""
-        model = MultiHeadAttention(
+        """测试 MLA 机制与 TensorLayerCache（legacy 多机制类）"""
+        model = MultiHeadAttentionLegacy(
             hidden_size=self.hidden_size,
             num_heads=self.num_heads,
             q_lora_rank=64,
@@ -79,9 +79,9 @@ class TestMultiHeadAttention(unittest.TestCase):
         self.assertEqual(cache.seq_length, self.seq_len)
 
     def test_hca_attention(self):
-        """测试 HCA (FP4 / FP16) 机制"""
+        """测试 HCA (FP4 / FP16) 机制（legacy 多机制类）"""
         for fp4_option in [True, False]:
-            model = MultiHeadAttention(
+            model = MultiHeadAttentionLegacy(
                 hidden_size=self.hidden_size,
                 num_heads=self.num_heads,
                 use_hca=True,
@@ -101,8 +101,8 @@ class TestMultiHeadAttention(unittest.TestCase):
             self.assertEqual(cache.seq_length, expected_blocks)
 
     def test_csa_attention(self):
-        """测试 CSA 机制与 Top-K 选择"""
-        model = MultiHeadAttention(
+        """测试 CSA 机制与 Top-K 选择（legacy 多机制类）"""
+        model = MultiHeadAttentionLegacy(
             hidden_size=self.hidden_size,
             num_heads=self.num_heads,
             use_csa=True,
@@ -119,17 +119,18 @@ class TestMultiHeadAttention(unittest.TestCase):
         self.assertEqual(cache.seq_length, self.seq_len // 4)
 
     def test_backward_pass(self):
-        """测试全模式下的训练梯度反向传播"""
+        """测试全模式下的训练梯度反向传播（Standard GQA 走纯 MHA，其余走 legacy 多机制类）"""
         configs = [
             {"name": "Standard GQA", "kwargs": {"num_kv_heads": 2}},
-            {"name": "MLA", "kwargs": {"q_lora_rank": 64, "kv_lora_rank": 32, "rope_dim": 16}},
-            {"name": "HCA", "kwargs": {"use_hca": True, "hca_latent_dim": 64, "hca_block_size": 16}},
-            {"name": "CSA", "kwargs": {"use_csa": True, "csa_compressed_dim": 64, "csa_block_size": 4, "csa_top_k": 8}}
+            {"name": "MLA", "kwargs": {"q_lora_rank": 64, "kv_lora_rank": 32, "rope_dim": 16}, "legacy": True},
+            {"name": "HCA", "kwargs": {"use_hca": True, "hca_latent_dim": 64, "hca_block_size": 16}, "legacy": True},
+            {"name": "CSA", "kwargs": {"use_csa": True, "csa_compressed_dim": 64, "csa_block_size": 4, "csa_top_k": 8}, "legacy": True}
         ]
 
         for config in configs:
             with self.subTest(mode=config["name"]):
-                model = MultiHeadAttention(
+                attn_cls = MultiHeadAttentionLegacy if config.get("legacy") else MultiHeadAttention
+                model = attn_cls(
                     hidden_size=self.hidden_size,
                     num_heads=self.num_heads,
                     **config["kwargs"]

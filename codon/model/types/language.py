@@ -2,6 +2,8 @@ from codon import *
 from codon.model.cache import ModelCache
 from codon.model.sampler import Sampler
 
+import inspect
+
 
 @dataclass
 class CausalLanguageModelOutput:
@@ -24,8 +26,37 @@ class CausalLanguageModelOutput:
 
 class CausalLanguageModel(BasicModel):
     '''
-    Base class for causal language models with optimized autoregressive generation capabilities.
+    Causal 语言模型基类，提供优化的自回归生成管线（generate / compute_perplexity）。
+
+    ## forward 契约（子类必须遵守）
+
+    `generate()` 会以关键字方式调用子类的 `forward`：
+
+        outputs = self.forward(input_ids=..., start_pos=..., past_key_values=...)
+
+    因此任何 CausalLanguageModel 子类的 `forward` **必须以 `input_ids` 为第一参数**，
+    并接受 `start_pos` 与 `past_key_values` 关键字，返回 `CausalLanguageModelOutput`
+    （含 `logits`，形状 [batch, seq, vocab]）。本类在子类定义时即校验该约定，
+    签名不含 `input_ids`（或没有 `**kwargs` 兜底）的子类会在 import 时直接报错，
+    而不是等到 generate 运行到一半才暴露。
     '''
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        forward = cls.__dict__.get('forward')
+        if forward is None:
+            return  # 允许中间抽象层暂不实现；真正实例化前必须补全
+        try:
+            params = inspect.signature(forward).parameters
+        except (TypeError, ValueError):
+            return  # C 扩展/不可检视的 callable，跳过静态校验
+        names = set(params)
+        has_kwargs = any(p.kind == p.VAR_KEYWORD for p in params.values())
+        if 'input_ids' not in names and not has_kwargs:
+            raise TypeError(
+                f'{cls.__name__}.forward must accept `input_ids` as its first '
+                f'parameter (CausalLanguageModel contract used by generate()). '
+                f'Got signature: {inspect.signature(forward)}'
+            )
 
     def generate(
         self,

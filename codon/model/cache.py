@@ -1,5 +1,4 @@
 from codon import *
-from codon.utils.builtin import string_has
 
 
 class BasicLayerCache:
@@ -120,35 +119,63 @@ class FourierLayerCache(BasicLayerCache):
 
 class LinearAttentionLayerCache(BasicLayerCache):
     '''
-    可扩展示例：线性注意力 (Linear Attention / Mamba / Recurrent) 缓存。
-    线性注意力的 Cache 是一个固定大小的状态矩阵 S_t = S_{t-1} + K_t^T * V_t，不需要 concat 变长。
+    线性注意力 (Linear Attention / Mamba / Recurrent) 缓存。
+
+    线性注意力的 Cache 是固定大小的状态矩阵，而非变长的 K/V concat：
+        numerator  S_t = S_{t-1} + K_t^T * V_t          [Batch, Head, D_k, D_v]
+        normalize  z_t = z_{t-1} + sum(K_t, dim=-1)     [Batch, Head, D_k]  （可选，用于 elu+1 核的归一化）
     '''
     def __init__(self):
-        self.state: Optional[torch.Tensor] = None  # 形状一般为 [Batch, Head, D_k, D_v]
+        self.state: Optional[torch.Tensor] = None    # numerator [B, H, Dk, Dv]
+        self.norm_state: Optional[torch.Tensor] = None  # normalize z [B, H, Dk]
         self._seq_len = 0
 
     @property
     def seq_length(self) -> int:
         return self._seq_len
 
-    def update(self, state_increment: torch.Tensor, steps: int = 1) -> torch.Tensor:
+    def update(
+        self,
+        state_increment: torch.Tensor,
+        steps: int = 1,
+        norm_increment: torch.Tensor = None,
+    ) -> torch.Tensor:
+        '''
+        累加线性注意力状态。
+
+        Args:
+            state_increment: numerator 增量 [B, H, Dk, Dv]。
+            steps: 本步推进的 token 数（默认 1，供 seq_length 计数）。
+            norm_increment: 归一化 z 增量 [B, H, Dk]；None 表示不使用归一化分母。
+        '''
         if self.state is None:
             self.state = state_increment.detach()
         else:
-            # 自动检测设备不一致并进行转移
             if self.state.device != state_increment.device:
                 self.to(state_increment.device)
             self.state = self.state + state_increment
+
+        if norm_increment is not None:
+            if self.norm_state is None:
+                self.norm_state = norm_increment.detach()
+            else:
+                if self.norm_state.device != norm_increment.device:
+                    self.norm_state = self.norm_state.to(norm_increment.device)
+                self.norm_state = self.norm_state + norm_increment
+
         self._seq_len += steps
         return self.state
 
     def reset(self):
         self.state = None
+        self.norm_state = None
         self._seq_len = 0
 
     def to(self, device: torch.device, dtype: Optional[torch.dtype] = None) -> 'LinearAttentionLayerCache':
         if self.state is not None:
             self.state = self.state.to(device=device, dtype=dtype)
+        if self.norm_state is not None:
+            self.norm_state = self.norm_state.to(device=device, dtype=dtype)
         return self
 
 
@@ -270,34 +297,55 @@ class ModelCache:
 
 def build_cache(layer: object) -> BasicLayerCache:
     '''
-    
-    sup:
-        - MultiHeadFourier: FourierLayerCache
-        - MultiHeadAttention (MLA, kv_lora_rank > 0): TensorLayerCache(concat_dim=1)
-        - MultiHeadAttention (Standard GQA/MHA): KVLayerCache
-        - MultiHeadAttentionKEV: TensorLayerCache(concat_dim=2)
+    按 layer 的机制特征创建对应 KV 缓存。
+
+    - MultiHeadFourier → FourierLayerCache
+    - MultiHeadAttentionKEV → TensorLayerCache(concat_dim=2)
+    - MLA（kv_lora_rank > 0）→ TensorLayerCache(concat_dim=1)
+    - HCA（use_hca）→ HCALayerCache
+    - CSA（use_csa）→ CSALayerCache
+    - 标准 MHA / GQA（含纯 MultiHeadAttention 与 legacy 各模式）→ KVLayerCache
+    - BasicLinearAttention → LinearAttentionLayerCache
+
+    注意：为避免与 codon.block.attention 的模块级 import 环，本函数
+    （而非模块顶层）延迟 import 具体注意力类型。
     '''
     if hasattr(layer, 'module'):
         layer = layer.module
 
-    class_name = layer.__class__.__name__
-    
-    if not string_has(class_name, ['Attention', 'Fourier']):
-        raise TypeError(f'Unsupported layer type for cache creation: {class_name}')
-    
-    if string_has(class_name, ['Fourier']):
-        return FourierLayerCache()
-        
-    if string_has(class_name, ['KEV']):
+    # 1) 属性路由（先）：MLA/HCA/CSA 特征可直接由属性判定
+    if getattr(layer, 'use_hca', False):
+        return HCALayerCache(fp4_storage=getattr(layer, 'hca_fp4_storage', True))
+    if getattr(layer, 'use_csa', False):
+        return CSALayerCache()
+    if getattr(layer, 'kv_lora_rank', 0) > 0:
+        return TensorLayerCache(concat_dim=1)
+
+    # 2) 声明式路由：若 layer 覆写了 cache_type() 类方法（非契约默认值），优先采用。
+    #    供 BasicAttention 系各机制声明自己的缓存类型（如线性注意力 → LinearAttentionLayerCache）。
+    declared = getattr(type(layer), 'cache_type', None)
+    if declared is not None:
+        from codon.block.attention.base import BasicAttention as _BasicAttn
+        declared_type = declared()
+        if issubclass(type(layer), _BasicAttn) and declared_type is not BasicLayerCache:
+            if declared_type is LinearAttentionLayerCache:
+                return LinearAttentionLayerCache()
+            return declared_type()
+
+    # 3) 类型路由（后）：标准 MHA/GQA / KEV / Fourier
+    from codon.block.attention.mha import MultiHeadAttention as _MHA
+    from codon.block.attention._legacy import MultiHeadAttentionLegacy as _Legacy
+    from codon.block.attention._legacy import MultiHeadAttentionKEV as _KEV
+    from codon.block.fourier import MultiHeadFourier as _MHF
+
+    if isinstance(layer, _KEV):
         return TensorLayerCache(concat_dim=2)
-    
-    if string_has(class_name, ['Attention']):
-        if getattr(layer, 'use_hca', False):
-            return HCALayerCache(fp4_storage=getattr(layer, 'hca_fp4_storage', True))
-        if getattr(layer, 'use_csa', False):
-            return CSALayerCache()
-        if getattr(layer, 'kv_lora_rank', 0) > 0:
-            return TensorLayerCache(concat_dim=1)
+    if isinstance(layer, _MHF):
+        return FourierLayerCache()
+    if isinstance(layer, _MHA):
         return KVLayerCache()
-            
-    raise NotImplementedError(f'No cache mapping found for class: {class_name}')
+    if isinstance(layer, _Legacy):
+        # legacy 多机制实例：无 hca/csa/lora 特征时即标准 MHA/GQA 分支
+        return KVLayerCache()
+
+    raise TypeError(f'Unsupported layer type for cache creation: {type(layer).__name__}')
