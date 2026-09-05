@@ -1,4 +1,4 @@
-from codon.base import *
+from codon import *
 from codon.exp.block.cortex_v2 import CorticalColumn
 from typing import Optional, Literal
 
