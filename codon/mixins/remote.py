@@ -31,7 +31,8 @@ class RemoteResourceMixin(CodonMixin):
         url: Optional[str] = None,
         cache_dir: Optional[str] = None,
         token: Optional[str] = None,
-        repo_type: Optional[Literal['model', 'dataset']] = None
+        repo_type: Optional[Literal['model', 'dataset']] = None,
+        **kwargs
     ) -> TRemoteResource:
         '''
         Load a resource from a remote repository or custom URL.
@@ -81,10 +82,10 @@ class RemoteResourceMixin(CodonMixin):
 
         local_paths = repo.download_configured_files(platform=platform)
 
-        self._dispatch_load(local_paths)
+        self._dispatch_load(local_paths, **kwargs)
         return self
 
-    def _dispatch_load(self, local_paths: list[str]) -> None:
+    def _dispatch_load(self, local_paths: list[str], **kwargs) -> None:
         '''
         Dispatch loaded files to the appropriate loader method.
 
@@ -100,7 +101,7 @@ class RemoteResourceMixin(CodonMixin):
             NotImplementedError: If no loader method is found.
         '''
         if hasattr(self, '_load_remote'):
-            self._load_remote(local_paths)
+            self._load_remote(local_paths, **kwargs)
         elif local_paths:
             target_file = local_paths[0]
             if hasattr(self, 'load_pretrained'):

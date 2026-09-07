@@ -74,14 +74,6 @@ class MotifA1(CausalLanguageModel):
             if module.padding_idx is not None:
                 torch.nn.init.zeros_(module.weight[module.padding_idx])
 
-    # 早期版 MotifA1 权重布局与本类现行结构存在三点无损差异，加载前就地重排：
-    #   1) MLP：早期为分离 gate_proj/up_proj（本类 use_swiglu=True 用融合 gate_up_proj）。
-    #      gate_up_proj.weight = cat([up_proj.weight, gate_proj.weight], dim=0)
-    #      （codon SwiGLU 前向 out,gate=split(x)，前半不激活 = up，后半 silu = gate，故 up 在前）
-    #   2) decoder 层 RMSNorm：早期参数名 weight（codon.block.norm.RMSNorm 现为 gamma）。
-    #      顶层 norm 与 attention 内 q/k norm 为 torch.nn.RMSNorm，参数本就叫 weight，无需改名。
-    #   3) token_emb.weight：早期 tie 时只落盘 proj_out.weight，由它补一份。
-    #  注意：本方法不改 codon 库任何模块结构，仅做 checkpoint 键名/形状适配。
     def load(self, path, strict=False):
         if isinstance(path, str) and path.endswith('.safetensors'):
             try:
