@@ -179,6 +179,48 @@ class LinearAttentionLayerCache(BasicLayerCache):
         return self
 
 
+class GatedDeltaAttentionLayerCache(BasicLayerCache):
+    '''
+    GatedDeltaNet 的固定大小状态缓存。
+
+    与 LinearAttentionLayerCache 不同：delta rule 是「先遗忘再写入」
+    S = S·exp(g) + kᵀ(β(v − kᵀS))，不是加法累加，也无需归一化分母；
+    另需三份 depthwise short conv 的历史缓存。
+    '''
+    def __init__(self, state=None, conv_state=None, seq_len=0):
+        self.state = state          # [B, H, Dk, Dv] 带遗忘的 delta-rule 状态
+        self.conv_state = conv_state  # (cq, ck, cv) 各 [B, D, conv_size-1]
+        self._seq_len = seq_len
+
+    @classmethod
+    def from_payload(cls, payload, seq_len=0):
+        '''从 prefill 的 payload 状态构建 cache，供后续 decode 使用。'''
+        return cls(state=payload['state'], conv_state=payload['conv_state'], seq_len=seq_len)
+
+    @property
+    def seq_length(self) -> int:
+        return self._seq_len
+
+    def update(self, state, conv_state, steps=1):
+        '''覆盖式写入：递归状态与 conv 历史整体替换，不累加。'''
+        self.state = state.detach()
+        self.conv_state = tuple(c.detach() for c in conv_state)
+        self._seq_len += steps
+        return self.state
+
+    def reset(self):
+        self.state = None
+        self.conv_state = None
+        self._seq_len = 0
+
+    def to(self, device, dtype=None):
+        if self.state is not None:
+            self.state = self.state.to(device=device, dtype=dtype)
+        if self.conv_state is not None:
+            self.conv_state = tuple(c.to(device=device, dtype=dtype) for c in self.conv_state)
+        return self
+
+
 class HCALayerCache(BasicLayerCache):
     def __init__(self, fp4_storage: bool = True):
         self.fp4_storage = fp4_storage

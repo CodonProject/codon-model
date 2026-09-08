@@ -15,6 +15,7 @@ class AttentionOutput:
     output: torch.Tensor
     attention_weights: Optional[torch.Tensor] = None
     past_key_value: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
+    payload: Optional[dict] = None
 
 
 def apply_attention(
