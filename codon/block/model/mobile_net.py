@@ -218,13 +218,14 @@ class MobileNetV3(BasicModel):
 
     backend = None
 
-    def __init__(self, backend: str | None = None, act=nn.Hardswish):
+    def __init__(self, backend: str | None = None, act=nn.Hardswish, return_features: bool = False):
         super(MobileNetV3, self).__init__()
         if backend is None:
             backend = 'small' if self.backend is None else self.backend
         if backend not in _BACKEND_BLOCKS:
             raise ValueError(f'unknown backend {backend!r}; choose from {list(_BACKEND_BLOCKS)}')
         self.backend = backend
+        self.return_features = return_features
 
         head_in, head_out = _BACKEND_HEAD[backend]
 
@@ -269,8 +270,8 @@ class MobileNetV3(BasicModel):
     def forward(self, x):
         out = self.act1(self.norm1(self.conv1(x)))
         out = self.bneck(out)
-
         out = self.act2(self.norm2(self.conv2(out)))
+        if self.return_features: return out
         out = self.gap(out).flatten(1)
         out = self.drop(self.act3(self.norm3(self.proj(out))))
 
@@ -373,8 +374,8 @@ class MobileNetV3_Small(MobileNetV3):
     backend = 'small'
     __remote_resource__ = {**MobileNetV3.__remote_resource__, 'files': [_REMOTE_FILES['small']]}
 
-    def __init__(self, act=nn.Hardswish):
-        super(MobileNetV3_Small, self).__init__(backend='small', act=act)
+    def __init__(self, act=nn.Hardswish, return_features: bool = False):
+        super(MobileNetV3_Small, self).__init__(backend='small', act=act, return_features=return_features)
 
 
 class MobileNetV3_Large(MobileNetV3):
@@ -383,5 +384,5 @@ class MobileNetV3_Large(MobileNetV3):
     backend = 'large'
     __remote_resource__ = {**MobileNetV3.__remote_resource__, 'files': [_REMOTE_FILES['large']]}
 
-    def __init__(self, act=nn.Hardswish):
-        super(MobileNetV3_Large, self).__init__(backend='large', act=act)
+    def __init__(self, act=nn.Hardswish, return_features: bool = False):
+        super(MobileNetV3_Large, self).__init__(backend='large', act=act, return_features=return_features)

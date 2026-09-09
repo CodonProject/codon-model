@@ -17,6 +17,13 @@ class PretrainConfig:
     # ---- 模型 ----
     compiled: bool = field(default=True)
 
+    # ---- 数据拆包（多模态用）----
+    # None = 默认纯文本拆包：batch -> ({'input_ids': inputs}, labels)
+    # 自定义签名：batch_builder(batch) -> (model_kwargs: dict, labels: Tensor)
+    # 例如 VLM：lambda b: ({'input_ids': b[1], 'images': b[3],
+    #                      'image_patch_id': PATCH_ID}, b[2])
+    batch_builder: Optional[Callable] = field(default=None)
+
     # ---- 分段上下文计划 ----
     base_context: int = field(default=512)
     target_context: int = field(default=4096)
@@ -330,15 +337,50 @@ class PretrainPipeline(BasicPipeline):
             self._runner = StatefulPlanRunner(self._plan, self._dataset, self._eos_id)
 
     # ------------------------------------------------------------ 单步训练
+    @staticmethod
+    def _default_batch_builder(batch):
+        '''默认拆包：`(stage, inputs, labels)` -> `({'input_ids': inputs}, labels)`。'''
+        if len(batch) == 3:
+            _, inputs, labels = batch
+        else:
+            inputs, labels = batch
+        return {'input_ids': inputs}, labels
+
+    def _unpack_batch(self, batch):
+        '''按 `batch_builder` 把一条 batch 拆成 `(模型 kwargs, labels)`。
+
+        默认实现兼容纯文本的 `(stage, inputs, labels)`；多模态（图像 + 占位符索引）
+        只需传入自定义 `batch_builder`，无需改训练循环。
+        '''
+        builder = getattr(self._config, 'batch_builder', None)
+        if builder is None:
+            return self._default_batch_builder(batch)
+        return builder(batch)
+
+    @staticmethod
+    def _to_device(value, device):
+        '''递归把 kwargs 里的张量搬到 device，保持 list/tuple 的嵌套结构。
+
+        多模态的 `images` 既可能是扁平的图像列表，也可能是「每 batch 行一个子列表」，
+        压平会丢掉 batch 归属，因此这里逐层重建容器而不是 flatten。
+        '''
+        if isinstance(value, torch.Tensor):
+            return value.to(device)
+        if isinstance(value, list):
+            return [PretrainPipeline._to_device(v, device) for v in value]
+        if isinstance(value, tuple):
+            return tuple(PretrainPipeline._to_device(v, device) for v in value)
+        return value
+
     def train_step(self, batch):
-        stage, inputs, labels = batch
-        inputs = inputs.to(self.device)
+        model_kwargs, labels = self._unpack_batch(batch)
+        model_kwargs = {k: self._to_device(v, self.device) for k, v in model_kwargs.items()}
         labels = labels.to(self.device)
 
         self._optimizer.zero_grad(set_to_none=True)
 
         with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-            output: CausalLanguageModelOutput = self.model(inputs)
+            output: CausalLanguageModelOutput = self.model(**model_kwargs)
             loss = F.cross_entropy(output.logits.view(-1, output.logits.size(-1)), labels.view(-1))
             if output.aux_loss is not None:
                 loss = loss + output.aux_loss
@@ -354,7 +396,8 @@ class PretrainPipeline(BasicPipeline):
         return {
             'loss/train': float(loss.detach().float()),
             'lr': self.current_lr,
-            'seq_len': float(stage.seq_len),
+            # batch 首元素是 stage 时取计划里的 seq_len；自定义 batch_builder 可能不带 stage
+            'seq_len': float(getattr(batch[0], 'seq_len', labels.shape[-1])),
         }
 
     # ------------------------------------------------------------ checkpoint
@@ -443,13 +486,10 @@ class PretrainPipeline(BasicPipeline):
         total, n = 0.0, 0
         with torch.no_grad(), torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
             for item in dataset:
-                if len(item) == 3:
-                    _, inputs, labels = item
-                else:
-                    inputs, labels = item
-                inputs = inputs.to(self.device)
+                model_kwargs, labels = self._unpack_batch(item)
+                model_kwargs = {k: self._to_device(v, self.device) for k, v in model_kwargs.items()}
                 labels = labels.to(self.device)
-                output: CausalLanguageModelOutput = self.model(inputs)
+                output: CausalLanguageModelOutput = self.model(**model_kwargs)
                 loss = F.cross_entropy(
                     output.logits.view(-1, output.logits.size(-1)), labels.view(-1))
                 total += float(loss) * labels.numel()

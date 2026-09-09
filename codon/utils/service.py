@@ -141,11 +141,13 @@ class Service:
         '''
         data = []
         for model_id, card in self.models.items():
+            meta = getattr(card.model, 'meta', None)
             data.append({
                 'id': model_id,
                 'object': 'model',
                 'created': int(time.time()),
-                'owned_by': card.owned
+                'owned_by': card.owned,
+                'capabilities': meta.to_dict() if meta is not None else None,
             })
         return JSONResponse(content={'object': 'list', 'data': data})
 

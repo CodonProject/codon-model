@@ -23,6 +23,9 @@ class MotifA1(CausalLanguageModel):
         'repo_type': 'model'
     }
 
+    # 支持思考：词表含 [cot_start]/[cot_end]，chat 管线以 enable_thinking=True 打开思考段
+    supports_thinking = True
+
     def __init__(
         self,
         vocab_size: int = 2**13,

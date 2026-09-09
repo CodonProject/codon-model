@@ -685,3 +685,88 @@ class InterleavedRotaryEmbedding(BasicRotaryEmbedding):
         sin_all = sin_all.to(x.dtype)
 
         return (x * cos_all) + (self._rotate_half(x) * sin_all)
+
+
+class InterleavedFourierRotaryEmbedding(InterleavedRotaryEmbedding):
+    def __init__(
+        self,
+        model_dim: int,
+        max_len: int = 131072,
+        base: int = 500000,
+        num_axes: int = 3,
+        sigma: float = None,
+        train_len_per_axis: list = None,
+        num_params: float = None,
+    ):
+        super().__init__(model_dim, max_len, base, num_axes)
+        
+        if sigma is None:
+            sigma = fope_sigma(num_params) if num_params is not None else 0.3
+        
+        inv_freq = 1.0 / (base ** (torch.arange(0, model_dim, 2, dtype=torch.float) / model_dim))
+        
+        inv_freq_per_axis = inv_freq.chunk(num_axes)
+        
+        if train_len_per_axis is None:
+            train_len_per_axis = [None] * num_axes
+        else:
+            assert len(train_len_per_axis) == num_axes, "Must provide train_len for each axis"
+        
+        fourier_cos_list = []
+        fourier_sin_list = []
+        
+        for ax, (freqs, train_len) in enumerate(zip(inv_freq_per_axis, train_len_per_axis)):
+            K = len(freqs)
+            if train_len is not None:
+                floor_freq = 2.0 * math.pi / float(train_len)
+                keep_mask = freqs >= floor_freq
+                if keep_mask.sum() == 0:
+                    keep_mask = torch.ones_like(keep_mask, dtype=torch.bool)
+                freqs = freqs[keep_mask]
+                K_keep = len(freqs)
+            else:
+                K_keep = K
+            
+            coef_s = (sigma / math.sqrt(K_keep)) * torch.randn(K_keep, K_keep)
+            coef_s = coef_s.fill_diagonal_(1.0)
+            coef_c = (sigma / math.sqrt(K_keep)) * torch.randn(K_keep, K_keep)
+            coef_c = coef_c.fill_diagonal_(1.0)
+            
+            seq = torch.arange(max_len, dtype=torch.float)
+            ang = torch.outer(seq, freqs)  # [max_len, K_keep]
+            base_sin, base_cos = ang.sin(), ang.cos()
+            
+            fourier_sin = base_sin @ coef_s  # [max_len, K_keep]
+            fourier_cos = base_cos @ coef_c
+            
+            if K_keep < K:
+                pad = K - K_keep
+                zeros = torch.zeros(max_len, pad)
+                ones = torch.ones(max_len, pad)
+                fourier_sin = torch.cat([fourier_sin, zeros], dim=-1)
+                fourier_cos = torch.cat([fourier_cos, ones], dim=-1)
+            
+            fourier_cos_list.append(fourier_cos)  # [max_len, K]
+            fourier_sin_list.append(fourier_sin)  # [max_len, K]
+        
+        cos_per_axis = torch.cat(fourier_cos_list, dim=-1)  # [max_len, half]
+        sin_per_axis = torch.cat(fourier_sin_list, dim=-1)  # [max_len, half]
+
+        # 频率表只有 half = model_dim // 2 列（`_rotate_half` 用 d 配 d + half），
+        # 因此不能直接用父类按 model_dim 生成的 interleave_idx（其值域可超过 half-1）。
+        # 这里在 half 宽度上重建同样的「轴轮转」顺序：第 p 个频率槽属于轴 p % num_axes，
+        # 在「按轴分块拼接」的布局中位于 j * k + i。
+        half = model_dim // 2
+        k = half // num_axes
+        half_interleave_idx = torch.tensor(
+            [(p % num_axes) * k + (p // num_axes) for p in range(half)], dtype=torch.long
+        )
+
+        cos_reordered = cos_per_axis[:, half_interleave_idx]  # [max_len, half]
+        sin_reordered = sin_per_axis[:, half_interleave_idx]
+        
+        cos_cached = torch.cat([cos_reordered, cos_reordered], dim=-1)  # [max_len, model_dim]
+        sin_cached = torch.cat([sin_reordered, sin_reordered], dim=-1)
+        
+        self.register_buffer('cos_cached', cos_cached, persistent=False)
+        self.register_buffer('sin_cached', sin_cached, persistent=False)
