@@ -6,15 +6,10 @@ from codon.model.types.language import CausalLanguageModel, CausalLanguageModelO
 from codon.utils.tokens import PackedTokenizer
 
 from typing import Any, Dict, List, Optional, Union
-
 from tqdm import tqdm
 
-# LoRA 注入目标的声明类型：族名 / nn.Module 类型 / 具体模块名（可混合列表）
-_LoraTarget = Union[str, type, List[Union[str, type]]]
 
-# =========================================================================
-# 一、配置
-# =========================================================================
+_LoraTarget = Union[str, type, List[Union[str, type]]]
 
 @configclass
 class LoRAConfig:
@@ -89,9 +84,6 @@ def _coerce_lora_config(lora: Any) -> Optional[LoRAConfig]:
     raise TypeError(
         f'SFTConfig.lora 需为 bool 或 LoRAConfig 实例，got {type(lora).__name__}')
 
-# =========================================================================
-# 二、SFT 阶段
-# =========================================================================
 
 @dataclass
 class SFTStage:
@@ -124,10 +116,6 @@ def build_sft_stages(stage_specs, tokenizer, pad_length, batch_size, dataset_cls
         ))
     return stages
 
-
-# =========================================================================
-# 三、内置回调：进度条 / 自动 checkpoint+阶段保存 / 聊天探针
-# =========================================================================
 
 class _ProgressBar(Callback):
     def __init__(self, pipeline):
@@ -260,10 +248,6 @@ class _ChatProbe(Callback):
             self._run()
 
 
-# =========================================================================
-# 四、Pipeline 本体
-# =========================================================================
-
 class SFTPipeline(BasicPipeline):
     def __init__(
         self,
@@ -328,7 +312,6 @@ class SFTPipeline(BasicPipeline):
             )
             self.callbacks.append(self._probe_cb)
 
-    # ------------------------------------------------------------ stage 内化
     def _build_stages_from_config(self) -> List[SFTStage]:
         '''按 SFTConfig.stage_specs / pad_length / batch_size / dataset_kwargs 自动构建数据集阶段。'''
         cfg = self._config
@@ -344,7 +327,6 @@ class SFTPipeline(BasicPipeline):
             dataset_cls=cfg.dataset_cls, **ds_kwargs,
         )
 
-    # ------------------------------------------------------------ 属性
     @property
     def model(self) -> CausalLanguageModel:
         return self._model_compiled if self._model_compiled is not None else self._model
@@ -364,7 +346,6 @@ class SFTPipeline(BasicPipeline):
     def optimizers(self):
         return {'main': self._optimizer} if self._optimizer is not None else {}
 
-    # ------------------------------------------------------------ setup
     def _assemble_lora(self) -> None:
         '''按 LoRAConfig 注入 LoRA 并冻结主干。幂等：已注入（外部手配）则只补 freeze + 一致性提示。'''
         from codon.utils.lora import has_lora, count_lora
@@ -445,7 +426,6 @@ class SFTPipeline(BasicPipeline):
 
         self._optimizer = torch.optim.AdamW(param_groups, lr=cfg.learning_rate)
 
-        # 与参考脚本一致的 warmup -> cosine（跨阶段统一调度）
         warmup_sched = torch.optim.lr_scheduler.LinearLR(
             self._optimizer,
             start_factor=1e-8 / cfg.learning_rate,
@@ -463,7 +443,6 @@ class SFTPipeline(BasicPipeline):
             milestones=[warmup],
         )
 
-    # ------------------------------------------------------------ 数据 / epoch
     @staticmethod
     def _epoch_to_stage_pos(epoch: int, stages: List[SFTStage]):
         '''全局 epoch 序号 -> (stage_idx, epoch_idx)。用于断点续训后跳过已跑阶段。'''
@@ -491,7 +470,6 @@ class SFTPipeline(BasicPipeline):
                     self._current_stage = stage
                     yield stage.dataset
 
-    # ------------------------------------------------------------ 单步训练
     def train_step(self, batch):
         input_ids = batch['input_ids'].to(self.device)
         labels = batch['labels'].to(self.device)
@@ -521,7 +499,6 @@ class SFTPipeline(BasicPipeline):
             'lr': self.current_lr,
         }
 
-    # ------------------------------------------------------------ checkpoint
     def _lora_spec(self) -> Dict[str, Any]:
         '''序列化 LoRA 注入配置，随 adapter 存档用于一致性提示。'''
         cfg = self._lora_cfg if self._lora_active else None
@@ -582,7 +559,6 @@ class SFTPipeline(BasicPipeline):
         if self._scheduler is not None and payload.get('scheduler') is not None:
             self._scheduler.load_state_dict(payload['scheduler'])
 
-    # ------------------------------------------------------------ train（自动续训）
     def train(
         self,
         dataset: Optional[List[Any]] = None,
@@ -622,7 +598,6 @@ class SFTPipeline(BasicPipeline):
             resume_from=resume_from,
         )
 
-    # ------------------------------------------------------------ stage / final 导出
     def save_stage(self, stage: SFTStage) -> None:
         '''阶段完成权重导出。
         LoRA 模式默认 adapter-only（save_lora 为主）；save_merged=True 时额外 merge 后
@@ -639,7 +614,6 @@ class SFTPipeline(BasicPipeline):
         else:
             self._model.save_pretrained(stage.ckpt)
 
-    # ------------------------------------------------------------ 兜底保存 / 清理
     def _exit_safety_save(self):
         '''exit_manager 兜底：进程退出（含 SIGTERM/崩溃）时再存一次 last.pt。'''
         try:

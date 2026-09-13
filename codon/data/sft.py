@@ -19,7 +19,6 @@ _DEFAULT_SYSTEM_PROMPTS = [
     'Answer the user concisely and accurately.',
 ]
 
-# 正则 / 常量（参考 convert_sft 的多格式解析经验）
 _THINK_RE = re.compile(r'<think>(.*?)</think>', re.S)
 _DEDICATED_COT_KEYS = ('reasoning_content', 'reasoning', 'hidden', 'thinking',
                        'chain_of_thought', 'cot', 'rationale')
@@ -29,7 +28,6 @@ _TOOL_BLOCK_TYPES = ('toolCall', 'tool_use', 'tool_use_block', 'tool_call')
 _TOOL_RESULT_TYPES = ('tool_result', 'toolResult', 'tool_response')
 _SKIP_BLOCK_TYPES = ('image', 'input_image', 'image_url', 'file')
 
-# 原始消息 role -> 内部规范 role（human / model / tool_response）
 _SOURCE_ROLE_MAP = {
     'user': 'human', 'human': 'human',
     'assistant': 'model', 'model': 'model',
@@ -42,10 +40,6 @@ _SYSTEM_ROLES = {'system', 'developer'}
 _INPUT_KEYS = ('instruction', 'question', 'prompt', 'problem', 'input', 'context', 'query', 'user')
 _OUTPUT_KEYS = ('output', 'response', 'answer', 'content', 'completion', 'result', 'assistant')
 
-
-# --------------------------------------------------------------------------
-# 通用文本 / 内容块解析（移植自 convert_sft 的解析经验）
-# --------------------------------------------------------------------------
 
 def _parse_args(v: Any) -> Any:
     '''把参数尽量解析成结构化对象；已是 str 非 JSON 则原样。'''
@@ -69,8 +63,7 @@ def _content_blocks(content: list) -> tuple:
         if isinstance(b, str):
             texts.append(b)
             continue
-        if not isinstance(b, dict):
-            continue
+        if not isinstance(b, dict): continue
         t = b.get('type') or ''
         if t in _TEXT_BLOCK_TYPES:
             v = b.get('text')
@@ -93,8 +86,7 @@ def _content_blocks(content: list) -> tuple:
             elif isinstance(v, list):
                 sub, _, _ = _content_blocks(v)
                 texts.extend(sub)
-        elif t in _SKIP_BLOCK_TYPES:
-            continue
+        elif t in _SKIP_BLOCK_TYPES: continue
         else:
             v = b.get('text', b.get('content'))
             if isinstance(v, str) and v:
@@ -127,8 +119,7 @@ def _split_think(content: str):
     out, rest = [], content
     while True:
         m = _THINK_RE.search(rest)
-        if not m:
-            break
+        if not m: break
         out.append(m.group(1).strip())
         rest = rest[:m.start()] + rest[m.end():]
     if out:
@@ -144,14 +135,12 @@ def _extract_tool_calls(m: dict) -> list:
     raw = m.get('tool_calls')
     if raw is None:
         raw = m.get('tool_call')
-    if not raw:
-        return []
+    if not raw: return []
     if isinstance(raw, dict):
         raw = [raw]
     out = []
     for t in raw:
-        if not isinstance(t, dict):
-            continue
+        if not isinstance(t, dict): continue
         name, args = None, None
         fn = t.get('function')
         if isinstance(fn, dict):
@@ -171,16 +160,13 @@ def _normalize_tools(tools: Any) -> list:
     if not tools:
         return []
     if isinstance(tools, str):
-        try:
-            tools = json.loads(tools)
-        except Exception:
-            return []
+        try: tools = json.loads(tools)
+        except Exception: return []
     if not isinstance(tools, list):
         return []
     out = []
     for t in tools:
-        if not isinstance(t, dict):
-            continue
+        if not isinstance(t, dict): continue
         d = dict(t)
         fn = d.get('function')
         if isinstance(fn, dict) and fn.get('name') and 'name' not in d:
@@ -189,10 +175,6 @@ def _normalize_tools(tools: Any) -> list:
         out.append(d)
     return out
 
-
-# --------------------------------------------------------------------------
-# 各种 row / message 形态 -> 内部规范 group
-# --------------------------------------------------------------------------
 
 def _canonicalize_model_content(raw: Any):
     '''model 的 content（list 块 / str）-> (cot, content_text, tool_calls)。'''
@@ -225,8 +207,7 @@ def _msg_to_turn(m: dict) -> Optional[dict]:
         cot = ''
         for k in _DEDICATED_COT_KEYS:
             v = m.get(k)
-            if v is None:
-                continue
+            if v is None: continue
             if isinstance(v, list):
                 v = _content_to_text(v)
             elif not isinstance(v, str):
@@ -252,7 +233,6 @@ def _msg_to_turn(m: dict) -> Optional[dict]:
 
 def _row_to_session_group(row: dict) -> Optional[dict]:
     '''把 session / messages / conversations / 单轮 形态行 -> 规范 group，失败返回 None。'''
-    # 1) 新结构 session
     if isinstance(row.get('session'), list):
         turns = []
         for t in row['session']:
@@ -287,7 +267,6 @@ def _row_to_session_group(row: dict) -> Optional[dict]:
         tools = _normalize_tools(row.get('tool'))
         return {'system': _render_system(row.get('system', ''), tools), 'turns': turns}
 
-    # 2) OpenAI/agentic messages
     msgs = row.get('messages')
     if msgs is None:
         msgs = row.get('conversations')
@@ -299,15 +278,13 @@ def _row_to_session_group(row: dict) -> Optional[dict]:
     if isinstance(msgs, list):
         system_parts, turns = [], []
         for m in msgs:
-            if not isinstance(m, dict):
-                continue
+            if not isinstance(m, dict): continue
             role = str(m.get('role', ''))
             if role in _SYSTEM_ROLES:
                 c = _content_to_text(m.get('content'))
                 if c.strip():
                     system_parts.append(c)
                 continue
-            # ShareGPT conversations: {from: 'human'/'gpt', value: ...}
             if role == '' and m.get('from'):
                 g = str(m.get('from'))
                 role = 'user' if g in ('human', 'user') else ('assistant' if g in ('gpt', 'assistant') else role)
@@ -317,12 +294,10 @@ def _row_to_session_group(row: dict) -> Optional[dict]:
             item = _msg_to_turn(m)
             if item is not None:
                 turns.append(item)
-        if not turns:
-            return None
+        if not turns: return None
         tools = _normalize_tools(row.get('tools', row.get('tool', row.get('functions'))))
         return {'system': _render_system('\n\n'.join(system_parts), tools), 'turns': turns}
 
-    # 3) 单轮列（alpaca / QA / MotifSFT input-content 等）返回标记，交给 merge 池
     return _turn_row_hint(row)
 
 
@@ -341,7 +316,6 @@ def _normalize_tc_list(tc: Any) -> list:
 def _turn_row_hint(row: dict) -> Optional[str]:
     '''检测单轮列形态：命中返回 'turn'（供 merge 池），否则 None。'''
     if any(k in row for k in _INPUT_KEYS) or any(k in row for k in _OUTPUT_KEYS):
-        # MotifSFT input/content 也属此类
         return 'turn'
     return None
 
@@ -349,8 +323,7 @@ def _turn_row_hint(row: dict) -> Optional[str]:
 def _human_from_row(row: dict) -> str:
     for k in _INPUT_KEYS:
         v = row.get(k)
-        if isinstance(v, str) and v.strip():
-            return v
+        if isinstance(v, str) and v.strip(): return v
     return ''
 
 
@@ -375,7 +348,7 @@ def _model_from_row(row: dict):
         if isinstance(v, str):
             out = v
         elif isinstance(v, list):
-            texts, thinks, calls = _content_blocks(v)
+            texts, _, _ = _content_blocks(v)
             if texts:
                 out = '\n'.join(texts)
     if out is None:
@@ -402,10 +375,6 @@ def _render_system(system: Any, tools: list) -> str:
         seg.append('Available tools: ' + json.dumps(tools, ensure_ascii=False))
     return '\n\n'.join(seg)
 
-
-# --------------------------------------------------------------------------
-# CodonSFT
-# --------------------------------------------------------------------------
 
 class CodonSFT(CodonDataset):
     '''
@@ -441,7 +410,7 @@ class CodonSFT(CodonDataset):
         pattern: str = '*.jsonl',
         recursive: bool = True,
         seed: int = 42,
-        merge_turns: bool = True,        # 伪多对话组装开关（对单轮问答行）
+        merge_turns: bool = True,
     ) -> None:
         if two_turn_prob < 0 or three_turn_prob < 0:
             raise ValueError('turn probabilities must be non-negative')
@@ -484,19 +453,15 @@ class CodonSFT(CodonDataset):
             random.Random(seed).shuffle(turn_rows)
             self.groups.extend(self._build_turn_groups(turn_rows, random.Random(seed + 1)))
 
-    # ------------------------------------------------------------------ 读取
     @staticmethod
     def _iter_jsonl(path: str):
         opener = gzip.open if path.endswith('.gz') else open
         with opener(path, 'rt', encoding='utf-8', errors='replace') as fh:
             for line in fh:
                 line = line.strip()
-                if not line:
-                    continue
-                try:
-                    yield json.loads(line)
-                except Exception:
-                    continue
+                if not line: continue
+                try: yield json.loads(line)
+                except Exception: continue
 
     @staticmethod
     def _iter_json(path: str):
@@ -505,8 +470,7 @@ class CodonSFT(CodonDataset):
             o = json.load(fh)
         if isinstance(o, list):
             yield from (x for x in o if isinstance(x, dict))
-        elif isinstance(o, dict):
-            yield o
+        elif isinstance(o, dict): yield o
 
     @staticmethod
     def _iter_parquet(path: str):
@@ -516,8 +480,7 @@ class CodonSFT(CodonDataset):
             raise ImportError('读取 .parquet 需要 pyarrow，请 pip install pyarrow')
         pf = pq.ParquetFile(path)
         for batch in pf.iter_batches(batch_size=2048):
-            for r in batch.to_pylist():
-                yield r
+            for r in batch.to_pylist(): yield r
 
     def _load_rows(self, folder: str) -> list:
         rows = []
@@ -566,8 +529,7 @@ class CodonSFT(CodonDataset):
             turns = []
             for row in turn_rows[i:i + n]:
                 parsed = _model_from_row(row)
-                if parsed is None:
-                    continue
+                if parsed is None: continue
                 human, cot, content = parsed
                 if human:
                     turns.append({'role': 'human', 'content': human, 'cot': '', 'tool_call': []})
@@ -592,8 +554,7 @@ class CodonSFT(CodonDataset):
                 norm = []
                 for t in tc:
                     nm = t.get('name')
-                    if not nm:
-                        continue
+                    if not nm: continue
                     arg = t.get('param')
                     if not isinstance(arg, str):
                         arg = json.dumps(arg, ensure_ascii=False)

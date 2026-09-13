@@ -1,11 +1,9 @@
 from codon import *
-# NOTE: `from codon import *` also exports stdlib `dataclasses.field`, which @configclass
-# does not recognize. Import the config-aware `field` AFTER the star import to shadow it.
 from codon.config import configclass, field
 from codon.block.attention import GatedDeltaAttention, MultiHeadAttention
 from codon.block.embedding import InterleavedFourierRotaryEmbedding, RotaryEmbedding
 from codon.block import MLP
-from codon.block.model import MobileNetV3
+from codon.impl import MobileNetV3
 from codon.model.cache import (
     BasicLayerCache,
     GatedDeltaAttentionLayerCache,

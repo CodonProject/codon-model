@@ -1,6 +1,6 @@
 from codon import *
 
-from codon.block.model import ResNet
+from codon.impl import ResNet
 from codon.block import (
     LookupFreeQuantization, LookupFreeQuantizationOutput,
     InterleavedRotaryEmbedding,

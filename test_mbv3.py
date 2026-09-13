@@ -1,5 +1,5 @@
 from codon import *
-from codon.block.model import MobileNetV3
+from codon.impl import MobileNetV3
 
 backend = 'large'
 image_dim = 960 if backend == 'large' else 576

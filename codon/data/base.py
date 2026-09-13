@@ -159,15 +159,36 @@ class TorchDatasetWrapper(Dataset):
         '''
         Creates a PyTorch DataLoader from this wrapped dataset.
 
+        ``torch.utils.data.default_collate`` cannot batch dataclass items, so when
+        the wrapped dataset returns dataclasses (the image datasets do) the default
+        is replaced by a field-wise collate that rebuilds the item type.
+
         Args:
             batch_size (int): How many samples per batch to load. Defaults to 1.
             shuffle (bool): Set to True to have the data reshuffled at every epoch. Defaults to False.
             **kwargs: Additional keyword arguments to pass to DataLoader (e.g., num_workers, pin_memory).
+                ``collate_fn`` is honored when given.
 
         Returns:
             DataLoader: A PyTorch DataLoader instance.
         '''
+        if kwargs.get('collate_fn') is None and not self._items_collate_directly():
+            from .image import collate_image_items
+            kwargs['collate_fn'] = collate_image_items
         return DataLoader(self, batch_size=batch_size, shuffle=shuffle, **kwargs)
+
+    def _items_collate_directly(self) -> bool:
+        '''
+        Reports whether a batch of this dataset can go straight to ``default_collate``.
+
+        Returns:
+            bool: False when items are dataclasses, which ``default_collate``
+            cannot batch and which therefore need field-wise collation.
+        '''
+        if len(self.dataset) == 0:
+            return True
+        from dataclasses import is_dataclass
+        return not is_dataclass(self.dataset[self._seek_offset])
 
 
 class CodonBasicDataset:

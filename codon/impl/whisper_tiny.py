@@ -1,8 +1,6 @@
 from codon import *
 from codon.ops import AttentionOutput
 
-import os
-
 
 class WhisperEncoderAttention(BasicModel):
     '''
@@ -226,7 +224,7 @@ class WhisperTinyAudioEncoder(BasicModel):
         '''
         x = self.act(self.conv1(mel))
         x = self.act(self.conv2(x))
-        x = x.permute(0, 2, 1)                              # [B, T/2, D]
+        x = x.permute(0, 2, 1) # [B, T/2, D]
 
         seq_len = x.shape[1]
         if seq_len > self.max_source_positions:
@@ -252,7 +250,6 @@ class WhisperTinyAudioEncoder(BasicModel):
 
         return x, all_attentions
 
-    # ------------------------------------------------------------ 远程加载
     def _load_remote(self, local_paths: list, **kwargs):
         '''从 `__remote_resource__` 下载后加载（键名已是 codon 命名，直接 load）。'''
         if not local_paths:

@@ -1,5 +1,8 @@
 from .flatdata import FlatDataset, FlatColumnDataset, MappedFlatDataset
-from .image    import ImageDataset, TarImageDataset, ImageDatasetItem
+from .image    import (
+    ImageDataset, TarImageDataset, ParquetImageDataset,
+    ImageDatasetItem, ImageRecord, load_image,
+)
 from .chunked  import ChunkedTokenStream
 
 from .dataviewer import DataViewer, preview_fields
@@ -24,7 +27,10 @@ __all__ = [
     'MappedFlatDataset',
     'ImageDataset',
     'TarImageDataset',
+    'ParquetImageDataset',
     'ImageDatasetItem',
+    'ImageRecord',
+    'load_image',
     'ChunkedTokenStream',
     'DataViewer',
     'preview_fields'
