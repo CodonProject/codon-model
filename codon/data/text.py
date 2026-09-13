@@ -6,7 +6,7 @@ from typing import List, Optional, Dict, Any, Union
 import pyarrow.parquet as pq
 from tqdm import tqdm   # 进度条
 
-from codon.utils.data.base import CodonDataset
+from codon.data.base import CodonDataset
 from codon.utils.tokens import PackedTokenizer
 
 

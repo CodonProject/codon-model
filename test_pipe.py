@@ -17,7 +17,7 @@ pipeline = PretrainPipeline(
     )
 )
 
-from codon.utils.data.text import TextFileDataset
+from codon.data.text import TextFileDataset
 
 dataset = TextFileDataset('D:/Datasets/NSFW_Pre', recursive=True, tokenizer=tokenizer, seq_len=1024, drop_last=False, shuffle=True)
 

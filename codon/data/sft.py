@@ -8,7 +8,7 @@ from typing import Any, Optional, Sequence
 
 import torch
 
-from codon.utils.data.base import CodonDataset
+from codon.data.base import CodonDataset
 from codon.utils.session import Session
 from codon.utils.tokens import PackedTokenizer
 

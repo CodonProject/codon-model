@@ -105,7 +105,7 @@ def build_sft_stages(stage_specs, tokenizer, pad_length, batch_size, dataset_cls
     '''stage_specs: [{name, folder, epochs, ckpt}, ...] -> List[SFTStage]
     dataset_cls: 数据集类，默认 codon.utils.data.sft.CodonSFT（自动识别 MotifSFT 行 /
     session / messages / parquet 等混合格式）；显式传 codon.motif.data.MotifSFT 回到旧行为。'''
-    from codon.utils.data.sft import CodonSFT
+    from codon.data.sft import CodonSFT
     cls = dataset_cls or CodonSFT
     stages = []
     for s in stage_specs:

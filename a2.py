@@ -4,7 +4,7 @@ from codon.motif.motif_a2 import MotifA2
 print('[*] Building model...')
 model = MotifA2().to_device('cuda' if torch.cuda.is_available() else 'cpu').compiled(dynamic=True)
 
-from codon.utils.data.text import TextFileDataset, PackedTokenizer
+from codon.data.text import TextFileDataset, PackedTokenizer
 
 tokeniz = PackedTokenizer('./data/tokenizer.zip')
 dataset = TextFileDataset('./output.parquet', recursive=True, tokenizer=tokeniz, seq_len=8192, drop_last=False, shuffle=True, seed=42)

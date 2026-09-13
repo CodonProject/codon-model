@@ -1,5 +1,5 @@
 from codon import *
-from codon.utils.data.base import CodonDataset
+from codon.data.base import CodonDataset
 
 @dataclass
 class EABStats:

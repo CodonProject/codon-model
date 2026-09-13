@@ -1,7 +1,7 @@
 import torch
 from typing import Any, Dict, Iterable, Iterator, List, Union, TYPE_CHECKING
 
-from codon.utils.data.base import CodonDataset, CodonIterableDataset
+from codon.data.base import CodonDataset, CodonIterableDataset
 if TYPE_CHECKING:
     from codon.motif.data import MotifPrev1
 
