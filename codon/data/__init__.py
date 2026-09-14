@@ -1,6 +1,6 @@
 from .flatdata import FlatDataset, FlatColumnDataset, MappedFlatDataset
 from .image    import (
-    ImageDataset, TarImageDataset, ParquetImageDataset,
+    ImageDataset, ParquetImageDataset,
     ImageDatasetItem, ImageRecord, load_image,
 )
 from .chunked  import ChunkedTokenStream
@@ -26,7 +26,6 @@ __all__ = [
     'FlatColumnDataset',
     'MappedFlatDataset',
     'ImageDataset',
-    'TarImageDataset',
     'ParquetImageDataset',
     'ImageDatasetItem',
     'ImageRecord',

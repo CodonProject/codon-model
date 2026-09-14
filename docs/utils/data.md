@@ -312,8 +312,9 @@ ParquetImageDataset(
 )
 ```
 
-* `path` — a `.parquet` file, a directory of `*.parquet` shards, or a list of both.
-  Rows are addressed globally across every shard.
+* `path` — a `.parquet` file, a directory of `*.parquet` shards, a glob pattern
+  (`'shards/**/*.parquet'`), or a list of those. Rows are addressed globally
+  across every shard, and overlapping inputs are deduplicated in first-seen order.
 * `image_key` — one column or several, or `None` to auto-detect; pass
   `detect_image_keys()`-style detection results or read `dataset.image_keys`.
   Detection looks at the schema (`binary`/`struct`/`string`/`list` columns only),

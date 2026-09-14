@@ -1446,158 +1446,6 @@ class ImageDataset(CodonDataset):
         '''
         self.close()
 
-class TarImageDataset(CodonDataset):
-    '''
-    A dataset class for loading image files directly from a TAR archive.
-
-    This avoids high I/O overhead from many small image files on the filesystem.
-
-    Attributes:
-        _tar_path (Path): Path to the tar archive file.
-        _transforms (Optional[Compose]): Transformations to apply to the images.
-        _extensions (Tuple[str, ...]): Valid image file extensions.
-        _return_path (bool): Whether to include the file path in the returned item.
-        _classes (List[str]): List of class names (parsed from tar paths).
-        _class_to_idx (Dict[str, int]): Mapping from class name to integer label.
-        _samples (List[Tuple[str, int]]): List of (member_name, label) pairs.
-    '''
-
-    def __init__(
-        self,
-        tar_path: Union[str, Path],
-        transforms: Optional[Compose] = None,
-        extensions: Optional[Tuple[str, ...]] = None,
-        return_path: bool = False
-    ) -> None:
-        '''
-        Initializes the TarImageDataset.
-
-        Args:
-            tar_path (Union[str, Path]): Path to the tar archive file.
-            transforms (Optional[Compose]): A composition of torchvision transforms.
-            extensions (Optional[Tuple[str, ...]): Valid image file extensions.
-            return_path (bool): If True, returns the file path within the tar.
-        '''
-        super().__init__()
-        self._tar_path = Path(tar_path)
-        self._transforms = transforms
-        self._extensions = extensions or ('.jpg', '.jpeg', '.png', '.bmp', '.webp')
-        self._return_path = return_path
-        self._tar_handle = None
-
-        self._samples, self._classes, self._class_to_idx = self._build_index()
-
-    def _build_index(self) -> Tuple[List[Tuple[str, int]], List[str], Dict[str, int]]:
-        '''
-        Scans the tar archive once to build an index and find classes.
-
-        Returns:
-            Tuple[List[Tuple[str, int]], List[str], Dict[str, int]]:
-                Index of members, list of classes, and class mapping.
-        '''
-        samples = []
-        class_names = set()
-
-        if not self._tar_path.exists():
-            return [], [], {}
-
-        with tarfile.open(self._tar_path, 'r') as tar:
-            for member in tar.getmembers():
-                if not member.isfile():
-                    continue
-
-                path_parts = Path(member.name).parts
-                if member.name.lower().endswith(self._extensions):
-                    # Assume first part of path is the class if nested
-                    if len(path_parts) > 1:
-                        cls_name = path_parts[-2] # Parent directory name
-                        class_names.add(cls_name)
-                        samples.append((member.name, cls_name))
-                    else:
-                        samples.append((member.name, 'default'))
-                        class_names.add('default')
-
-        classes = sorted(list(class_names))
-        class_to_idx = {cls_name: i for i, cls_name in enumerate(classes)}
-
-        final_samples = [
-            (name, class_to_idx[cls_name]) for name, cls_name in samples
-        ]
-
-        return final_samples, classes, class_to_idx
-
-    def __len__(self) -> int:
-        '''
-        Returns the total number of images in the tar archive.
-
-        Returns:
-            int: Number of image samples.
-        '''
-        return len(self._samples)
-
-    def __getitem__(self, idx: int) -> ImageDatasetItem:
-        '''
-        Retrieves the image item from the tar archive at the specified index.
-
-        Args:
-            idx (int): The index of the sample to retrieve.
-
-        Returns:
-            ImageDatasetItem: Data class containing image, label, and optionally path.
-        '''
-        member_name, label = self._samples[idx]
-
-        try:
-            if self._tar_handle is None:
-                self._tar_handle = tarfile.open(self._tar_path, 'r')
-
-            member = self._tar_handle.getmember(member_name)
-            f = self._tar_handle.extractfile(member)
-            if f is None:
-                raise RuntimeError(f'Could not extract {member_name}')
-            
-            image_data = f.read()
-            image = Image.open(io.BytesIO(image_data)).convert('RGB')
-            f.close()
-        except Exception as error:
-            raise RuntimeError(f'Failed to load {member_name} from {self._tar_path}: {error}') from error
-
-        if self._transforms is not None:
-            image = self._transforms(image)
-
-        return ImageDatasetItem(
-            image=image,
-            label=label,
-            path=Path(member_name) if self._return_path else None
-        )
-
-    def __getstate__(self) -> Dict[str, Any]:
-        '''
-        Prepares the state for pickling, ensuring the file handle is excluded.
-        
-        Returns:
-            Dict[str, Any]: The object's state dictionary without the tar handle.
-        '''
-        state = self.__dict__.copy()
-        state['_tar_handle'] = None
-        return state
-
-    def __setstate__(self, state: Dict[str, Any]) -> None:
-        '''
-        Restores the object state after unpickling.
-        
-        Args:
-            state (Dict[str, Any]): The unpickled state dictionary.
-        '''
-        self.__dict__.update(state)
-
-    def __del__(self) -> None:
-        '''
-        Ensures the tar file handle is closed upon object destruction.
-        '''
-        if getattr(self, '_tar_handle', None) is not None:
-            self._tar_handle.close()
-
 
 class ParquetImageDataset(CodonDataset):
     '''
@@ -1629,7 +1477,8 @@ class ParquetImageDataset(CodonDataset):
         ])
 
     Attributes:
-        _path (Union[Path, List[Path]]): The configured source (file/dir/list).
+        _path (Union[Path, List[Path]]): The configured source (file, directory,
+            glob pattern, or a list of those).
         _image_key (str): Column holding the encoded image.
         _label_key (Optional[Union[str, List[str]]]): Column(s) holding labels.
         _path_key (Optional[str]): Column holding a per-row identifier/path.
@@ -1670,8 +1519,9 @@ class ParquetImageDataset(CodonDataset):
 
         Args:
             path (Union[str, Path, List[str], List[Path]]): A ``.parquet`` file,
-                a directory containing ``*.parquet`` shards, or an explicit
-                sequence of files/directories.
+                a directory containing ``*.parquet`` shards, a glob pattern
+                (``'shards/**/*.parquet'``), or an explicit sequence of any of
+                those.
             image_key (Optional[Union[str, Sequence[str]]]): Column holding the
                 encoded image bytes, the image ``struct`` (``bytes``/``path``), an
                 image file path, or a list of any of those. Several names read
@@ -1811,14 +1661,25 @@ class ParquetImageDataset(CodonDataset):
         '''
         Expands a configured path into an ordered list of parquet shards.
 
+        A glob pattern is expanded the same way :class:`ImageDataset` expands
+        its own sources, so ``'shards/**/*.parquet'`` and ``'data/part-*.parquet'``
+        behave identically across both datasets. Matches are sorted to keep the
+        global row addressing stable, and duplicate shards are dropped so that
+        overlapping inputs (a directory plus one of its own globs) are not read
+        twice.
+
         Args:
-            path (Any): A single file/directory or a sequence of them.
+            path (Any): A single file, directory, glob pattern, or a sequence
+                of any of those.
 
         Returns:
-            List[Path]: Candidate shard paths (not yet validated).
+            List[Path]: Candidate shard paths (not yet validated), deduplicated
+                in first-seen order.
 
         Raises:
-            FileNotFoundError: If an entry does not exist.
+            FileNotFoundError: If a concrete entry does not exist. A glob that
+                matches nothing is not an error here; it is reported by
+                :meth:`_resolve_files` when no shard is left.
         '''
         entries: Iterable[Any]
         if isinstance(path, (list, tuple, set)):
@@ -1828,14 +1689,22 @@ class ParquetImageDataset(CodonDataset):
 
         candidates: List[Path] = []
         for entry in entries:
+            text = str(entry)
             entry_path = Path(entry)
             if entry_path.is_dir():
                 candidates.extend(sorted(p for p in entry_path.glob('*.parquet') if p.is_file()))
             elif entry_path.is_file():
                 candidates.append(entry_path)
+            elif any(char in text for char in '*?['):
+                candidates.extend(
+                    sorted(
+                        Path(match) for match in glob.glob(text, recursive=True)
+                        if Path(match).is_file()
+                    )
+                )
             else:
                 raise FileNotFoundError(f'No such parquet file or directory: {entry_path}')
-        return candidates
+        return list(dict.fromkeys(candidates))
 
     def _normalize_image_keys(self, image_key: Optional[Union[str, Sequence[str]]]) -> List[str]:
         '''
