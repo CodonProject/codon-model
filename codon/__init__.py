@@ -16,7 +16,8 @@ from typing import (
 )
 from dataclasses import dataclass, field
 
-from codon.base import BasicModel, BasicOptimizer
+from codon.base import BasicModel
+from codon.optim.base import BasicOptimizer
 from codon.config import BasicConfig
 from codon.pipeline.base import BasicPipeline
 from codon.loss.base import BasicLoss

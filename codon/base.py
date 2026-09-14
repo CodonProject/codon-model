@@ -1,5 +1,4 @@
 import torch.nn as nn
-from torch.optim import Optimizer
 from functools import wraps
 from typing import TypeVar
 
@@ -38,14 +37,3 @@ class BasicModel(
     @wraps(utils_safecode)
     def safecode(self, length: int = 4, exclude_confusing: bool = False) -> str:
         return utils_safecode(length=length, exclude_confusing=exclude_confusing)
-
-
-class BasicOptimizer(
-    Optimizer,
-    DeviceDtypeMixin,
-    ParameterMixin,
-    TraversalMixin,
-    SnapshotMixin
-):
-    def __init__(self, params, defaults):
-        super().__init__(params, defaults)
