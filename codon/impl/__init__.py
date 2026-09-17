@@ -2,11 +2,37 @@ from .resnet import ResNet
 from .patch_disc import PatchDiscriminator
 from .tcn import TemporalConvNet
 from .mobile_net import MobileNetV3, MobileNetV3_Small, MobileNetV3_Large
+from .convnext import (
+    ConvNeXt,
+    ConvNeXtBlock,
+    ConvNeXtBlockTransition,
+    ConvNeXt_Tiny,
+    ConvNeXt_Small,
+    ConvNeXt_Base,
+    ConvNeXt_Large,
+    DropPath,
+    convnext_sizes,
+    remap_convnext_keys,
+)
 from .whisper_tiny import (
     WhisperTinyAudioEncoder,
     WhisperEncoderAttention,
     WhisperEncoderLayer,
     WhisperEncoderMLP,
+)
+from .dinov3_vit import (
+    DINOv3ViT,
+    DINOv3ViTBlock,
+    DINOv3ViTRope,
+    DINOv3ViT_Small,
+    DINOv3ViT_Base,
+    DINOv3ViT_Large,
+    DINOv3ViT_So400m,
+    DINOv3ViT_HugePlus,
+    DINOv3ViT_7B,
+    DropPath as ViTDropPath,
+    dinov3_sizes,
+    remap_dinov3_keys,
 )
 
 __all__ = [
@@ -16,8 +42,30 @@ __all__ = [
     'MobileNetV3',
     'MobileNetV3_Small',
     'MobileNetV3_Large',
+    'ConvNeXt',
+    'ConvNeXtBlock',
+    'ConvNeXtBlockTransition',
+    'ConvNeXt_Tiny',
+    'ConvNeXt_Small',
+    'ConvNeXt_Base',
+    'ConvNeXt_Large',
+    'DropPath',
+    'convnext_sizes',
+    'remap_convnext_keys',
     'WhisperTinyAudioEncoder',
     'WhisperEncoderAttention',
     'WhisperEncoderLayer',
     'WhisperEncoderMLP',
+    'DINOv3ViT',
+    'DINOv3ViTBlock',
+    'DINOv3ViTRope',
+    'DINOv3ViT_Small',
+    'DINOv3ViT_Base',
+    'DINOv3ViT_Large',
+    'DINOv3ViT_So400m',
+    'DINOv3ViT_HugePlus',
+    'DINOv3ViT_7B',
+    'ViTDropPath',
+    'dinov3_sizes',
+    'remap_dinov3_keys',
 ]

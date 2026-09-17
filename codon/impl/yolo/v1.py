@@ -6,42 +6,47 @@ from codon.impl.yolo.darknet import Darknet
 
 class YOLOv1(BasicModel):
     '''
-    YOLOv1 检测网络:Darknet 主干 + 全连接检测头。
+    YOLOv1 detector: a Darknet backbone followed by a fully connected detection head.
 
-    整体流程(默认输入边长 448、主干 32 倍下采样 -> 14x14 网格)::
+    The overall flow (default input side 448, backbone downsampling by 32 -> 14x14 grid)::
 
-        图像 [B, 3, 448, 448]
-          -> Darknet 主干(num_classes=0)        -> 特征图 [B, 1024, 14, 14]
-          -> 一次 2x2 stride=2 池化               -> [B, 1024, 7, 7]   = S x S
-          -> Flatten                              -> [B, 50176]
+        image [B, 3, 448, 448]
+          -> Darknet backbone (num_classes=0)    -> feature map [B, 1024, 14, 14]
+          -> one 2x2 stride=2 pooling            -> [B, 1024, 7, 7]   = S x S
+          -> Flatten                             -> [B, 50176]
           -> FC(50176 -> 4096) -> leaky ReLU -> Dropout
-          -> FC(4096 -> 1470)                     -> [B, 1470]
-          -> reshape                              -> [B, 7, 7, 30] = S x S x (B_boxes * 5 + C)
+          -> FC(4096 -> 1470)                    -> [B, 1470]
+          -> reshape                             -> [B, 7, 7, 30] = S x S x (B_boxes * 5 + C)
 
-    最后一维 30 个数的语义(本实现约定):
-        [ 0:20]  20 个类别条件概率 Pr(Class_i | Object),每个格子只有一套
-        [20:25]  box0 的 x, y, w, h, confidence
-        [25:30]  box1 的 x, y, w, h, confidence
-    其中 (x, y) 是相对格子左上角的偏移比例,w, h 是相对整张图的比例。
+    Meaning of the 30 numbers in the last dimension (as defined by this implementation):
+        [ 0:20]  20 class conditional probabilities Pr(Class_i | Object), one set per cell
+        [20:25]  x, y, w, h, confidence of box0
+        [25:30]  x, y, w, h, confidence of box1
+    where (x, y) are the offsets relative to the top-left corner of the cell and w, h are the
+    sizes relative to the whole image.
 
-    与论文的三点出入(都是把主干换成 Darknet-19 之后的必然结果):
+    Three deviations from the paper (all unavoidable once the backbone becomes Darknet-19):
 
-    - 论文主干 Darknet 是 64 倍下采样(448 -> 7x7),Darknet-19 是 32 倍(448 -> 14x14),
-      所以这里在主干之后补一次 2x2 stride=2 池化把网格压到 S x S,与论文的 7x7 对齐;
-      想要 13x13 网格(与 YOLOv2 一致)时传 ``S=13``,此时仍然只补一次池化。
-    - 论文分类头用平均池化,本实现沿用全连接路径(Flatten + FC),参数量与论文一致量级。
-    - 主干输出通道数取决于 ``variant``,检测头的输入维度按 ``out_channels * s_h * s_w`` 自适应,
-      不做任何硬编码。
+    - The paper's Darknet backbone downsamples by 64 (448 -> 7x7) whereas Darknet-19 downsamples
+      by 32 (448 -> 14x14), so one extra 2x2 stride=2 pooling is appended after the backbone to
+      squeeze the grid down to S x S and match the paper's 7x7; pass ``S=13`` for a 13x13 grid
+      (as in YOLOv2), in which case that single extra pooling is all that is added.
+    - The paper's classification head uses average pooling, whereas this implementation keeps the
+      fully connected path (Flatten + FC); the parameter count is of the same order as the paper.
+    - The number of backbone output channels depends on ``variant``, and the detection head input
+      dimension adapts to ``out_channels * s_h * s_w`` with no hard-coding.
 
     Attributes:
-        backbone (Darknet): 特征提取主干(num_classes=0,输出网格特征图)。
-        grid_pool (nn.MaxPool2d, optional): 把主干输出再下采样一次以对齐 S x S;不需要时为 None。
-        head (nn.Sequential): 两层全连接构成的检测头,最后一层为线性激活。
-        S (int): 网格边长。
-        B (int): 每个格子预测的框数量。
-        C (int): 类别数。
-        grid_size (int): 主干输出特征图边长。
-        sub_grid_size (int): grid_size 的一半,即补池化之后的网格边长。
+        backbone (Darknet): Feature extractor backbone (num_classes=0, outputs the grid feature map).
+        grid_pool (nn.MaxPool2d, optional): Downsamples the backbone output once more to align with
+            S x S; None when no extra pooling is needed.
+        head (nn.Sequential): Detection head made of two fully connected layers, the last one
+            linear.
+        S (int): Grid side length.
+        B (int): Number of boxes predicted per cell.
+        C (int): Number of classes.
+        grid_size (int): Side length of the backbone output feature map.
+        sub_grid_size (int): Half of grid_size, i.e. the grid side length after the extra pooling.
     '''
 
     def __init__(
@@ -57,23 +62,27 @@ class YOLOv1(BasicModel):
         size: int = 448
     ):
         '''
-        初始化 YOLOv1。
+        Initializes YOLOv1.
 
         Args:
-            in_channels (int, optional): 输入图像通道数。Defaults to 3.
-            S (int, optional): 网格边长,VOC 上论文用 7。Defaults to 7.
-            B (int, optional): 每个格子预测的框数量,论文为 2。Defaults to 2.
-            C (int, optional): 类别数,VOC 上为 20。Defaults to 20.
-            dropout (float, optional): 第一个全连接层后的 dropout 概率,论文为 0.5。Defaults to 0.5.
-            fc_dim (int, optional): 检测头中间层维度,论文为 4096。减小它可以大幅压缩参数量。
-                Defaults to 4096.
-            norm (str, optional): 主干归一化类型,官方 Darknet 配置为 'batch'。Defaults to 'batch'.
-            variant (str, optional): 主干变体,'19'(YOLOv2 的 Darknet-19)或 '53'(YOLOv3 的
-                Darknet-53)。Defaults to '19'.
-            size (int, optional): 输入图像边长,论文为 448。必须是 32 的倍数。Defaults to 448.
+            in_channels (int, optional): Number of input image channels. Defaults to 3.
+            S (int, optional): Grid side length; the paper uses 7 on VOC. Defaults to 7.
+            B (int, optional): Number of boxes predicted per cell; the paper uses 2. Defaults to 2.
+            C (int, optional): Number of classes; 20 on VOC. Defaults to 20.
+            dropout (float, optional): Dropout probability after the first fully connected layer;
+                the paper uses 0.5. Defaults to 0.5.
+            fc_dim (int, optional): Hidden dimension of the detection head; the paper uses 4096.
+                Reducing it shrinks the parameter count substantially. Defaults to 4096.
+            norm (str, optional): Normalization type of the backbone; the official Darknet
+                configuration uses 'batch'. Defaults to 'batch'.
+            variant (str, optional): Backbone variant, either '19' (the Darknet-19 of YOLOv2) or
+                '53' (the Darknet-53 of YOLOv3). Defaults to '19'.
+            size (int, optional): Input image side length; the paper uses 448. Must be a multiple
+                of 32. Defaults to 448.
 
         Raises:
-            ValueError: 当 ``S`` 不能由主干特征图下采样得到,或 ``size`` 不是 32 的倍数时。
+            ValueError: If ``S`` cannot be obtained by downsampling the backbone feature map, or
+                if ``size`` is not a multiple of 32.
         '''
         super().__init__()
         self.S = S
@@ -93,7 +102,8 @@ class YOLOv1(BasicModel):
         )
         self.grid_size = self.backbone.grid_size
 
-        # 主干只下采样 32 倍,论文的 448 -> 7x7 还需要再翻一倍;网格已经是 S 时就不补。
+        # The backbone downsamples by only 32, so the paper's 448 -> 7x7 still needs one more
+        # halving; nothing is appended when the grid is already S.
         if self.grid_size == S:
             self.grid_pool = None
             s_h = s_w = S
@@ -102,10 +112,10 @@ class YOLOv1(BasicModel):
             s_h = s_w = S
         else:
             raise ValueError(
-                f'主干在 size={size} 下输出 {self.grid_size}x{self.grid_size} 的特征图,'
-                f'再补一次 2x2 池化只能得到 {self.grid_size // 2}x{self.grid_size // 2},'
-                f'无法得到 S={S} 的网格。请把 S 设为 {self.grid_size} 或 {self.grid_size // 2},'
-                f'或调整 size。'
+                f'the backbone outputs a {self.grid_size}x{self.grid_size} feature map at '
+                f'size={size}, and one extra 2x2 pooling only yields '
+                f'{self.grid_size // 2}x{self.grid_size // 2}, which cannot give a grid with '
+                f'S={S}. Set S to {self.grid_size} or {self.grid_size // 2}, or adjust size.'
             )
         self.sub_grid_size = s_h
 
@@ -120,10 +130,11 @@ class YOLOv1(BasicModel):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         '''
         Args:
-            x (torch.Tensor): 输入图像。形状 [Batch, in_channels, size, size]
+            x (torch.Tensor): Input image of shape [Batch, in_channels, size, size].
 
         Returns:
-            torch.Tensor: 检测预测。形状 [Batch, S, S, B * 5 + C],默认即 [Batch, 7, 7, 30]
+            torch.Tensor: Detection predictions of shape [Batch, S, S, B * 5 + C], which is
+                [Batch, 7, 7, 30] by default.
         '''
         x = self.backbone(x)
         if self.grid_pool is not None:
@@ -143,20 +154,21 @@ class YOLOv1(BasicModel):
         variant: str = '19'
     ) -> 'YOLOv1':
         '''
-        根据输入形状自动构建 YOLOv1。
+        Builds a YOLOv1 automatically from the input shape.
 
         Args:
-            input_shape (Tuple[int, ...]): 输入形状(不含 batch),例如 (3, 448, 448)。
-            S (int, optional): 网格边长。Defaults to 7.
-            B (int, optional): 每个格子预测的框数量。Defaults to 2.
-            C (int, optional): 类别数。Defaults to 20.
-            dropout (float, optional): dropout 概率。Defaults to 0.5.
-            fc_dim (int, optional): 检测头中间层维度。Defaults to 4096.
-            norm (str, optional): 主干归一化类型。Defaults to 'batch'.
-            variant (str, optional): 主干变体 '19' 或 '53'。Defaults to '19'.
+            input_shape (Tuple[int, ...]): Input shape without the batch dimension, e.g.
+                (3, 448, 448).
+            S (int, optional): Grid side length. Defaults to 7.
+            B (int, optional): Number of boxes predicted per cell. Defaults to 2.
+            C (int, optional): Number of classes. Defaults to 20.
+            dropout (float, optional): Dropout probability. Defaults to 0.5.
+            fc_dim (int, optional): Hidden dimension of the detection head. Defaults to 4096.
+            norm (str, optional): Normalization type of the backbone. Defaults to 'batch'.
+            variant (str, optional): Backbone variant, '19' or '53'. Defaults to '19'.
 
         Returns:
-            YOLOv1: 构建好的模型实例。
+            YOLOv1: The constructed model instance.
         '''
         return YOLOv1(
             in_channels=input_shape[0],
@@ -185,7 +197,7 @@ if __name__ == '__main__':
     print('has negative:', bool((y < 0).any()), '| range:', float(y.min()), float(y.max()))
     print(model.count_params(human_readable=True))
 
-    # 用 Darknet-53 主干 + 13x13 网格(YOLOv2 风格的网格)
+    # Darknet-53 backbone + a 13x13 grid (YOLOv2-style grid)
     model53 = YOLOv1(variant='53', S=13, fc_dim=1024)
     with torch.no_grad():
         y53 = model53(torch.randn(1, 3, 416, 416))

@@ -4,21 +4,13 @@ from codon.ops import AttentionOutput
 
 class WhisperEncoderAttention(BasicModel):
     '''
-    Whisper encoder 的自注意力（双向、k_proj 无 bias、6 头）。
-
-    与 codon 的 `MultiHeadAttention` 差别：
-      - 非因果（encoder 是双向的）；
-      - q/v/o 三个投影带 bias，**k_proj 不带 bias**（Whisper 的原始设计，
-        encoder 与 decoder 的 self_attn / encoder_attn 都是如此，已核对权重文件）；
-      - 无 QK-norm、无 gate、无 RoPE（位置信息由 `embed_positions` 加法注入）。
-
-    投影命名沿用 codon 的 `proj_*` 习惯（对齐 motif_a1 的 `proj_out`）。
+    Self-attention used by the Whisper encoder (bidirectional, no bias on ``k_proj``, 6 heads).
 
     Attributes:
-        proj_q (nn.Linear): Query 投影（带 bias）。
-        proj_k (nn.Linear): Key 投影（无 bias）。
-        proj_v (nn.Linear): Value 投影（带 bias）。
-        proj_o (nn.Linear): 输出投影（带 bias）。
+        proj_q (nn.Linear): Query projection (with bias).
+        proj_k (nn.Linear): Key projection (without bias).
+        proj_v (nn.Linear): Value projection (with bias).
+        proj_o (nn.Linear): Output projection (with bias).
     '''
     def __init__(self, model_dim: int = 384, num_heads: int = 6, dropout: float = 0.0):
         super().__init__()
@@ -43,9 +35,15 @@ class WhisperEncoderAttention(BasicModel):
     ) -> AttentionOutput:
         '''
         Args:
-            hidden_states: [B, L, D]。
-            attention_mask: 加法式掩码（0 / -inf），形状可广播到 [B, 1, L, L]；None 表示全可见。
-            output_attentions: 是否返回注意力权重。
+            hidden_states (torch.Tensor): Input states of shape [B, L, D].
+            attention_mask (Optional[torch.Tensor], optional): Additive mask (0 / -inf) that
+                broadcasts to [B, 1, L, L]; None means every position is visible. Defaults to None.
+            output_attentions (bool, optional): Whether to also return the attention weights.
+                Defaults to False.
+
+        Returns:
+            AttentionOutput: The projected attention output, together with the attention weights
+                when ``output_attentions`` is True.
         '''
         b, l, _ = hidden_states.shape
 
@@ -74,11 +72,11 @@ class WhisperEncoderAttention(BasicModel):
 
 class WhisperEncoderMLP(BasicModel):
     '''
-    Whisper encoder 的前馈层：Linear -> GELU -> Linear，两层都带 bias。
+    Feed-forward layer of the Whisper encoder: Linear -> GELU -> Linear, both with bias.
 
     Attributes:
-        proj_fc1 (nn.Linear): 升维投影（384 -> 1536）。
-        proj_fc2 (nn.Linear): 降维投影（1536 -> 384）。
+        proj_fc1 (nn.Linear): Expansion projection (384 -> 1536).
+        proj_fc2 (nn.Linear): Contraction projection (1536 -> 384).
     '''
     def __init__(self, model_dim: int = 384, ffn_dim: int = 1536, dropout: float = 0.0):
         super().__init__()
@@ -93,13 +91,13 @@ class WhisperEncoderMLP(BasicModel):
 
 class WhisperEncoderLayer(BasicModel):
     '''
-    Whisper encoder 单层：pre-LN 自注意力 + pre-LN 前馈。
+    A single Whisper encoder layer: pre-LN self-attention followed by a pre-LN feed-forward.
 
     Attributes:
-        attn_norm (nn.LayerNorm): 注意力前的归一化。
-        attn (WhisperEncoderAttention): 双向自注意力。
-        fn_norm (nn.LayerNorm): 前馈前的归一化。
-        mlp (WhisperEncoderMLP): 前馈网络。
+        attn_norm (nn.LayerNorm): Normalization applied before attention.
+        attn (WhisperEncoderAttention): Bidirectional self-attention.
+        fn_norm (nn.LayerNorm): Normalization applied before the feed-forward.
+        mlp (WhisperEncoderMLP): The feed-forward network.
     '''
     def __init__(
         self,
@@ -134,29 +132,19 @@ class WhisperEncoderLayer(BasicModel):
 
 class WhisperTinyAudioEncoder(BasicModel):
     '''
-    Whisper-tiny 音频编码器（80 mel -> 384 dim，4 层，6 头，8.21M 参数）。
+    Whisper-tiny audio encoder (80 mel -> 384 dim, 4 layers, 6 heads, 8.21M parameters).
 
-    结构（与 openai/whisper 完全一致，已与 transformers 官方实现逐元素对拍，误差 ~1e-5）：
-
-        mel [B, 80, T]                      T = 3000（固定 30 秒 @100Hz）
-          conv1 Conv1d(80 -> 384, k=3, s=1, p=1) + bias, GELU
-          conv2 Conv1d(384 -> 384, k=3, s=2, p=1) + bias, GELU
-          transpose -> [B, T/2, 384]
-          + embed_positions (1500, 384)     可学习绝对位置
-          layers × 4（pre-LN，双向注意力）
-          norm (LayerNorm)
-        输出 [B, T/2, 384]
-
-    可选 `pool_stride`：在编码器输出后加一层无重叠平均池化做时间降采样，
-    用于压低喂给语言模型的 token 数（stride=8 -> 30 秒音频 187 个 token）。
-    池化发生在 `embed_positions` 之后，不改变编码器本身的权重。
+    The optional ``pool_stride`` appends a non-overlapping average pool after the encoder output
+    to downsample time, which keeps the number of tokens fed to the language model small
+    (stride=8 -> 187 tokens for 30 seconds of audio). The pooling happens after
+    ``embed_positions`` and does not change the encoder weights themselves.
 
     Attributes:
-        conv1 (nn.Conv1d): mel -> model_dim。
-        conv2 (nn.Conv1d): 时间下采样 2x。
-        embed_positions (nn.Embedding): 可学习绝对位置（1500）。
-        layers (nn.ModuleList): WhisperEncoderLayer × num_layers。
-        norm (nn.LayerNorm): 最终归一化。
+        conv1 (nn.Conv1d): mel -> model_dim.
+        conv2 (nn.Conv1d): 2x temporal downsampling.
+        embed_positions (nn.Embedding): Learnable absolute positions (1500).
+        layers (nn.ModuleList): WhisperEncoderLayer x num_layers.
+        norm (nn.LayerNorm): Final normalization.
     '''
     __remote_resource__ = {
         'repo': 'CodonProject/Whisper-Tiny-Encoder',
@@ -198,11 +186,11 @@ class WhisperTinyAudioEncoder(BasicModel):
 
     @property
     def downsample_factor(self) -> int:
-        '''**相对编码器输出**的降采样倍率 = pool_stride。
+        '''Downsampling factor **relative to the encoder output**, equal to pool_stride.
 
-        注意完整链路是 mel(100Hz) -> conv2(2x) -> pool(pool_stride)，
-        即相对 mel 帧率的总倍率是 `2 * pool_stride`：
-        pool_stride=1 时 30 秒音频输出 1500 个 token，pool_stride=8 时输出 187 个。
+        Note that the full chain is mel (100Hz) -> conv2 (2x) -> pool (pool_stride), so the
+        overall factor relative to the mel frame rate is ``2 * pool_stride``: with
+        pool_stride=1, 30 seconds of audio yields 1500 tokens; with pool_stride=8 it yields 187.
         '''
         return self.pool_stride
 
@@ -214,13 +202,18 @@ class WhisperTinyAudioEncoder(BasicModel):
     ):
         '''
         Args:
-            mel: [B, num_mel_bins, T]。与官方一致时 T = 3000（30 秒），
-                 短音频应 pad 到 3000 并丢弃 pad 段的输出。
-            attention_mask: 加法式掩码，形状 [B, 1, 1, T_out] 或可广播的形式。
-            output_attentions: 是否收集每层注意力权重。
+            mel (torch.Tensor): Input mel spectrogram of shape [B, num_mel_bins, T]. To match the
+                official model, T = 3000 (30 seconds); shorter audio should be padded to 3000 and
+                the outputs of the padded region discarded.
+            attention_mask (Optional[torch.Tensor], optional): Additive mask of shape
+                [B, 1, 1, T_out], or anything broadcastable to it. Defaults to None.
+            output_attentions (bool, optional): Whether to collect the attention weights of every
+                layer. Defaults to False.
 
         Returns:
-            (hidden_states [B, T/2/pool_stride, model_dim], attentions or None)
+            Tuple[torch.Tensor, Optional[List[torch.Tensor]]]: ``hidden_states`` of shape
+                [B, T/2/pool_stride, model_dim] and the per-layer attention weights, or None when
+                ``output_attentions`` is False.
         '''
         x = self.act(self.conv1(mel))
         x = self.act(self.conv2(x))
@@ -229,7 +222,7 @@ class WhisperTinyAudioEncoder(BasicModel):
         seq_len = x.shape[1]
         if seq_len > self.max_source_positions:
             raise ValueError(
-                f'序列长度 {seq_len} 超过 embed_positions 的 {self.max_source_positions}'
+                f'sequence length {seq_len} exceeds the {self.max_source_positions} positions of embed_positions'
             )
         positions = torch.arange(seq_len, device=x.device)
         x = x + self.embed_positions(positions).to(x.dtype)
@@ -251,7 +244,6 @@ class WhisperTinyAudioEncoder(BasicModel):
         return x, all_attentions
 
     def _load_remote(self, local_paths: list, **kwargs):
-        '''从 `__remote_resource__` 下载后加载（键名已是 codon 命名，直接 load）。'''
         if not local_paths:
             raise ValueError('no local file downloaded')
         target = local_paths[0]

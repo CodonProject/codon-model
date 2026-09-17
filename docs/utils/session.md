@@ -58,9 +58,24 @@ def add_message(
 ```python
 def add_generation_prompt(
     enable_thinking: bool = False,
-    disable_thinking: bool = False
+    disable_thinking: bool = False,
+    effort: Optional[str] = None
 ) -> Session
 ```
+
+When `enable_thinking=True`, the thinking-effort token is emitted right after `<|thought_start|>`.
+`effort` accepts `minimal` / `low` / `medium` / `high` / `xhigh` / `max` / `ultra`, which collapse onto
+three tokens:
+
+| effort | token |
+|--------|-------|
+| `minimal`, `low` | `<|effort_low|>` |
+| `medium`, `high`, `xhigh` | `<|effort_high|>` |
+| `max`, `ultra` | `<|effort_max|>` |
+
+`effort=None` uses the default level (`codon.res.EFFORT_DEFAULT`, i.e. `'high'`). An unknown level, or an
+explicit level whose token is missing from the vocab, raises `ValueError`; the default level is silently
+omitted for older vocabularies.
 
 **to_tensors()** - Convert to tensors:
 

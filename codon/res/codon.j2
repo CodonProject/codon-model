@@ -12,6 +12,18 @@
 {%- set role_strict = role_strict | default(false, true) -%}
 {%- set split_think = split_think | default(true, true) -%}
 
+{%- macro render_effort(level) -%}
+    {%- set aliases = {
+        'minimal': 'low', 'low': 'low',
+        'medium': 'high', 'high': 'high', 'xhigh': 'high',
+        'max': 'max', 'ultra': 'max'
+    } -%}
+    {%- set alias = (level | default('high', true) | string | trim | lower) or 'high' -%}
+    {%- if alias not in aliases -%}
+        {{- raise_exception("Unexpected effort level: " ~ alias ~ " (expected 'minimal', 'low', 'medium', 'high', 'xhigh', 'max' or 'ultra')") -}}
+    {%- endif -%}
+    {{- '<|effort_' ~ aliases[alias] ~ '|>' -}}
+{%- endmacro -%}
 
 {%- macro render_content(content, is_system=false) -%}
     {%- if content is string -%}
@@ -149,7 +161,9 @@
             {%- set content = content.split('</think>')[-1].strip() -%}
         {%- endif %}
         {%- if thought_content -%}
-            {{- '<|thought_start|>' -}}{{- thought_content | trim -}}{{- '<|thought_end|>' -}}
+            {{- '<|thought_start|>' -}}
+            {{- render_effort(message.effort | default(message.reasoning_effort, true) | default(effort, true)) -}}
+            {{- thought_content | trim -}}{{- '<|thought_end|>' -}}
         {%- endif -%}
         {%- if message.tool_calls -%}
             {{- render_tool_calls(message.tool_calls) -}}
@@ -176,7 +190,7 @@
 {%- if add_generation_prompt -%}
     {{- '<|im_start|><|model|>' -}}
     {%- if enable_thinking | default(true) -%}
-        {{- '<|thought_start|>' -}}
+        {{- '<|thought_start|>' -}}{{- render_effort(effort) -}}
     {%- else -%}
         {{- '<|thought_start|><|thought_end|>' -}}
     {%- endif -%}

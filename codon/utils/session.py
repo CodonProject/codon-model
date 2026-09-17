@@ -1,4 +1,5 @@
 from codon.utils.tokens import PackedTokenizer
+from codon.res import EFFORT_DEFAULT, resolve_effort
 from dataclasses import dataclass, field
 from typing import Optional, Union, Literal, Sequence
 import copy
@@ -16,6 +17,8 @@ _ANGLE_TOKEN_NAMES = {
     'model': '<|model|>', 'tool': '<|tool_response|>',
     'fim': '<|fim_middle|>',
     'cot_start': '<|thought_start|>', 'cot_end': '<|thought_end|>',
+    # 思考强度，紧跟在 cot_start 之后
+    'effort_low': '<|effort_low|>', 'effort_high': '<|effort_high|>', 'effort_max': '<|effort_max|>',
     'fim_pre': '<|fim_prefix|>', 'fim_mid': '<|fim_middle|>', 'fim_suf': '<|fim_suffix|>',
     'pad': '<|pad|>',
     'image_start': '<|modality_image_start|>', 'image_end': '<|modality_image_end|>',
@@ -121,6 +124,8 @@ class Session:
             'model': '[model]', 'tool': '[tool]',
             'fim': '[fim]',
             'cot_start': '[cot_start]', 'cot_end': '[cot_end]',
+            # 思考强度，紧跟在 cot_start 之后
+            'effort_low': '[effort_low]', 'effort_high': '[effort_high]', 'effort_max': '[effort_max]',
             'fim_pre': '[fim_pre]', 'fim_mid': '[fim_mid]', 'fim_suf': '[fim_suf]',
             'pad': '[pad]',
             'image_start': '[image_start]', 'image_end': '[image_end]',
@@ -320,17 +325,40 @@ class Session:
             self.add_message(m)
         return self
 
+    def _effort_key(self, effort: Optional[str] = None) -> str:
+        '''档位名 -> token 键（'xhigh' -> 'effort_high'），非法档位直接报错。'''
+        return f'effort_{resolve_effort(effort)}'
+
     def add_generation_prompt(
         self,
         enable_thinking: bool = False,
-        disable_thinking: bool = False
+        disable_thinking: bool = False,
+        effort: Optional[str] = None,
     ) -> 'Session':
+        '''
+        追加生成提示 <|im_start|><|model|>。
+
+        Args:
+            enable_thinking: 打开思考段，会在 <|thought_start|> 后接思考强度 token。
+            disable_thinking: 直接给空思考段 <|thought_start|><|thought_end|>，不带强度 token。
+            effort: 思考强度，'minimal' / 'low' / 'medium' / 'high' / 'xhigh' / 'max' / 'ultra'，
+                收敛到三个 token：minimal|low -> <|effort_low|>，medium|high|xhigh -> <|effort_high|>，
+                max|ultra -> <|effort_max|>；None 表示默认档位 EFFORT_DEFAULT。
+                若词表里没有对应 token：显式指定的档位会报错，默认档位则静默省略（兼容旧词表）。
+        '''
         if enable_thinking and disable_thinking:
             raise ValueError('enable_thinking and disable_thinking cannot both be True')
         self._pop_gen_prompt()
         parts = ['im_start', 'model']
         if enable_thinking:
             parts.append('cot_start')
+            effort_key = self._effort_key(effort)
+            if self._ids.get(effort_key) is not None:
+                parts.append(effort_key)
+            elif effort is not None:
+                raise ValueError(
+                    f'effort token {self._tokens.get(effort_key, effort_key)!r} not found in vocab'
+                )
         elif disable_thinking:
             parts.extend(['cot_start', 'cot_end'])
         ids: list[int] = []

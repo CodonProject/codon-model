@@ -3,17 +3,19 @@ from codon.block.conv import ConvBlock
 from codon.block.activation import LeakyReLU
 
 
-#: YOLOv1 论文公式 (2) 与 Darknet 官方配置里的非输出层统一使用斜率 0.1 的 leaky ReLU。
-#: 注意 codon.block.activation.LeakyReLU 的默认斜率是 0.01,必须显式传 0.1。
-#: 该激活无参数、无状态,全网络共享同一个实例(``Darknet`` 会把它原样复用而不是按名字重建)。
+#: YOLOv1 paper equation (2) and the official Darknet configurations use a leaky ReLU with
+#: slope 0.1 for every non-output layer. Note that codon.block.activation.LeakyReLU defaults to
+#: slope 0.01, so 0.1 must be passed explicitly.
+#: The activation has no parameters and no state, so the whole network shares one instance
+#: (``Darknet`` reuses it as is instead of rebuilding it from a name).
 act = LeakyReLU(0.1)
 
-#: Darknet 主干下采样 2 ** 5 = 32 倍,因此输入边长应是 32 的倍数。
+#: The Darknet backbone downsamples by 2 ** 5 = 32, so the input side must be a multiple of 32.
 GLOBAL_DOWNSAMPLE = 32
 
 
 # ----------------------------------------------------------------------
-# 通用构件
+# Shared building blocks
 # ----------------------------------------------------------------------
 
 
@@ -27,27 +29,32 @@ def darknet_conv(
     bias: bool = None
 ) -> ConvBlock:
     '''
-    构建一个 Darknet 卷积单元,即 cfg 文件里的一个 ``[convolutional]`` 段。
+    Builds a Darknet convolution unit, i.e. one ``[convolutional]`` section of a cfg file.
 
-    Darknet 的约定是 ``pad = size // 2``(same padding),所以 3x3 卷积用 padding=1、
-    1x1 卷积用 padding=0,再由 stride 决定是否下采样。有归一化时卷积不需要 bias
-    (bn 的 beta 已经承担了偏置),这一点与原版 darknet 的 ``batch_normalize`` 行为一致。
+    The Darknet convention is ``pad = size // 2`` (same padding), so a 3x3 convolution uses
+    padding=1 and a 1x1 convolution uses padding=0, while whether the layer downsamples is
+    decided by stride. With normalization the convolution needs no bias (the beta of the batch
+    norm already acts as the offset), which matches the ``batch_normalize`` behaviour of the
+    original darknet.
 
-    注意 ``codon.block.conv.ConvBlock`` 的默认值是 ``norm='batch'`` 与
-    ``activation='relu'``,与 Darknet 不同,所以这里所有参数都显式传递。
+    Note that ``codon.block.conv.ConvBlock`` defaults to ``norm='batch'`` and
+    ``activation='relu'``, which differs from Darknet, so every argument is passed explicitly
+    here.
 
     Args:
-        in_channels (int): 输入通道数。
-        out_channels (int): 输出通道数。
-        kernel_size (int): 卷积核边长。
-        stride (int, optional): 步长,2 表示下采样一半。Defaults to 1.
-        norm (str, optional): 归一化类型,Darknet 原版为 'batch'。Defaults to 'batch'.
-        activation (Union[str, BasicModel], optional): 激活函数。Defaults to act(斜率 0.1)。
-        bias (bool, optional): 是否使用卷积偏置。None 表示按 ``norm is None`` 自动决定。
-            Defaults to None.
+        in_channels (int): Number of input channels.
+        out_channels (int): Number of output channels.
+        kernel_size (int): Kernel size of the convolution.
+        stride (int, optional): Stride; 2 halves the spatial size. Defaults to 1.
+        norm (str, optional): Normalization type; the original Darknet uses 'batch'.
+            Defaults to 'batch'.
+        activation (Union[str, BasicModel], optional): Activation function. Defaults to act
+            (slope 0.1).
+        bias (bool, optional): Whether to use a convolution bias. None decides automatically
+            from ``norm is None``. Defaults to None.
 
     Returns:
-        ConvBlock: 卷积 + 归一化 + 激活 的组合单元。
+        ConvBlock: A unit combining convolution, normalization and activation.
     '''
     if bias is None:
         bias = norm is None
@@ -74,20 +81,22 @@ def darknet_linear_conv(
     stride: int = 1
 ) -> nn.Module:
     '''
-    构建一个纯线性卷积(无归一化、无激活),用于残差块的相加前与分类头。
+    Builds a purely linear convolution (no normalization, no activation), used before the
+    addition of a residual block and in the classification head.
 
-    ``codon.block.activation.get_activation`` 不接受 None,而 ``ConvBlock`` 在这种
-    情况下没法表达「不加激活」,所以这里直接返回 ``nn.Conv2d``:残差块的 shortcut 相加
-    与分类头的 logits 都需要线性输出。
+    ``codon.block.activation.get_activation`` does not accept None and ``ConvBlock`` cannot
+    express "no activation" in that case, so an ``nn.Conv2d`` is returned directly: the shortcut
+    addition of a residual block and the logits of the classification head both need a linear
+    output.
 
     Args:
-        in_channels (int): 输入通道数。
-        out_channels (int): 输出通道数。
-        kernel_size (int, optional): 卷积核边长。Defaults to 1.
-        stride (int, optional): 步长。Defaults to 1.
+        in_channels (int): Number of input channels.
+        out_channels (int): Number of output channels.
+        kernel_size (int, optional): Kernel size of the convolution. Defaults to 1.
+        stride (int, optional): Stride. Defaults to 1.
 
     Returns:
-        nn.Module: ``nn.Conv2d`` 实例(带偏置,因为后面没有归一层)。
+        nn.Module: An ``nn.Conv2d`` instance (with bias, since no normalization follows).
     '''
     return nn.Conv2d(
         in_channels=in_channels,
@@ -100,16 +109,18 @@ def darknet_linear_conv(
 
 def activation_name(activation: Union[str, None, BasicModel]) -> Optional[str]:
     '''
-    把激活配置归一化成字符串描述。
+    Normalizes an activation configuration into a string description.
 
-    建模时用的是激活对象本身(见 ``Darknet.activation_module``),这个字符串只用于展示与日志,
-    所以要保证同一份配置写两次得到同一个名字。
+    The activation object itself is what gets used when building the model (see
+    ``Darknet.activation_module``); this string is only for display and logging, so the same
+    configuration must always yield the same name.
 
     Args:
-        activation (Union[str, None, BasicModel]): 激活配置。
+        activation (Union[str, None, BasicModel]): The activation configuration.
 
     Returns:
-        Optional[str]: 字符串原样返回,``None`` 原样返回,模块取其类名小写(如 'leakyrelu')。
+        Optional[str]: Strings and ``None`` are returned unchanged; a module yields the lowercase
+            name of its class (for example 'leakyrelu').
     '''
     if activation is None or isinstance(activation, str):
         return activation
@@ -117,33 +128,39 @@ def activation_name(activation: Union[str, None, BasicModel]) -> Optional[str]:
 
 
 # ----------------------------------------------------------------------
-# Darknet 主干(YOLOv2 / YOLOv3)
+# Darknet backbone (YOLOv2 / YOLOv3)
 # ----------------------------------------------------------------------
 
 
 class ResidualBlock(BasicModel):
     '''
-    Darknet53 的瓶颈残差块:1x1 压缩 -> 3x3 扩展 -> shortcut。
+    The bottleneck residual block of Darknet53: 1x1 squeeze -> 3x3 expand -> shortcut.
 
-    对应官方 cfg 里连续出现的 ``[convolutional] filters=C size=1``、
-    ``[convolutional] filters=C size=3`` 与 ``[shortcut] activation=linear``:
+    It corresponds to the consecutive ``[convolutional] filters=C size=1``,
+    ``[convolutional] filters=C size=3`` and ``[shortcut] activation=linear`` entries of the
+    official cfg:
 
         y = x + conv3x3( activation( conv1x1( activation(x) ) ) )
 
-    与 ``codon.block.conv.ResBasicBlock`` 的差异:
+    Differences from ``codon.block.conv.ResBasicBlock``:
 
-    - shortcut 是 ``activation=linear``:相加之后**不**再统一激活,激活只在每个卷积之后;
-      ResBasicBlock 的 'original' 变体则是相加后再统一激活。因此扩展卷积 ``conv2`` 是纯线性的。
-    - Darknet53 的瓶颈比是 1:1(1x1 与 3x3 的输出通道相同,CIFAR 版 Darknet 才有 C/2 的压缩比),
-      所以 1x1 与 3x3 的通道数分别给出。
-    - 不需要 downsample 分支:下采样由每个块开头的 stride=2 卷积完成,残差块本身保持空间尺寸。
+    - The shortcut is ``activation=linear``: no activation is applied after the addition, the
+      activation only follows each convolution; the 'original' variant of ResBasicBlock instead
+      activates once after the addition. The expanding convolution ``conv2`` is therefore purely
+      linear.
+    - The bottleneck ratio of Darknet53 is 1:1 (the 1x1 and 3x3 layers have the same number of
+      output channels; only the CIFAR version of Darknet uses a C/2 compression ratio), so the
+      channel counts of the 1x1 and 3x3 convolutions are given separately.
+    - No downsample branch is needed: downsampling is done by the stride=2 convolution at the
+      start of each block, and the residual block itself preserves the spatial size.
 
     Attributes:
-        conv1 (ConvBlock): 1x1 压缩卷积(带激活)。
-        conv2 (nn.Conv2d): 3x3 扩展卷积(线性输出,相加前不激活)。
-        in_channels (int): 块的输入通道数。
-        inner_channels (int): 1x1 压缩后的瓶颈通道数。
-        out_channels (int): 块输出(shortcut 相加后)的通道数。
+        conv1 (ConvBlock): 1x1 squeeze convolution (with activation).
+        conv2 (nn.Conv2d): 3x3 expand convolution (linear output, no activation before the
+            addition).
+        in_channels (int): Number of input channels of the block.
+        inner_channels (int): Number of bottleneck channels after the 1x1 squeeze.
+        out_channels (int): Number of output channels of the block (after the shortcut addition).
     '''
 
     def __init__(
@@ -155,20 +172,21 @@ class ResidualBlock(BasicModel):
         activation: Union[str, BasicModel] = act
     ):
         '''
-        初始化瓶颈残差块。
+        Initializes the bottleneck residual block.
 
         Args:
-            in_channels (int): 块的输入通道数。
-            inner_channels (Optional[int], optional): 1x1 压缩后的瓶颈通道数。
-                省略时取 ``out_channels // 2``。Defaults to None.
-            out_channels (Optional[int], optional): 3x3 扩展后的输出通道数,也就是残差相加后的
-                通道数。省略时取 ``in_channels``(Darknet53 的 1:1 瓶颈)。Defaults to None.
-            norm (str, optional): 归一化类型。Defaults to 'batch'.
-            activation (Union[str, BasicModel], optional): 激活函数。Defaults to act。
+            in_channels (int): Number of input channels of the block.
+            inner_channels (Optional[int], optional): Number of bottleneck channels after the 1x1
+                squeeze. Defaults to ``out_channels // 2`` when omitted. Defaults to None.
+            out_channels (Optional[int], optional): Number of output channels of the 3x3 expand,
+                i.e. of the residual addition. Defaults to ``in_channels`` (the 1:1 bottleneck of
+                Darknet53) when omitted. Defaults to None.
+            norm (str, optional): Normalization type. Defaults to 'batch'.
+            activation (Union[str, BasicModel], optional): Activation function. Defaults to act.
 
         Raises:
-            ValueError: 当任一通道数不是正整数,或 ``out_channels != in_channels``
-                (shortcut 无法相加)时。
+            ValueError: If any channel count is not a positive integer, or if
+                ``out_channels != in_channels`` (the shortcut cannot be added).
         '''
         super().__init__()
 
@@ -176,12 +194,14 @@ class ResidualBlock(BasicModel):
         inner_channels = out_channels // 2 if inner_channels is None else inner_channels
         if inner_channels <= 0 or out_channels <= 0:
             raise ValueError(
-                f'瓶颈通道数必须是正整数,收到 inner={inner_channels}, out={out_channels}。'
+                f'bottleneck channel counts must be positive integers, got '
+                f'inner={inner_channels}, out={out_channels}'
             )
         if out_channels != in_channels:
             raise ValueError(
-                f'shortcut 要求输入输出通道一致,收到 in={in_channels}, out={out_channels};'
-                f'需要改通道数时请在块的开头用卷积完成。'
+                f'the shortcut requires identical input and output channels, got '
+                f'in={in_channels}, out={out_channels}; change the channel count with a '
+                f'convolution at the start of the block instead'
             )
 
         self.in_channels = in_channels
@@ -206,54 +226,66 @@ class ResidualBlock(BasicModel):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         '''
         Args:
-            x (torch.Tensor): 输入特征图。形状 [Batch, in_channels, H, W]
+            x (torch.Tensor): Input feature map of shape [Batch, in_channels, H, W].
 
         Returns:
-            torch.Tensor: 输出特征图。形状 [Batch, out_channels, H, W](空间尺寸不变)
+            torch.Tensor: Output feature map of shape [Batch, out_channels, H, W] (the spatial
+                size is unchanged).
         '''
         return x + self.conv2(self.conv1(x))
 
 
 # ----------------------------------------------------------------------
-# Darknet 主干(YOLOv2 / YOLOv3)
+# Darknet backbone (YOLOv2 / YOLOv3)
 # ----------------------------------------------------------------------
 
-#: conv 块:块内每个元素是一个普通卷积。
+#: conv block: every element inside the block is a plain convolution.
 CONV_BLOCK = 'conv'
-#: residual 块:块首是下采样卷积,其后每两个元素是一个瓶颈残差块。
+#: residual block: the block starts with a downsampling convolution and every two elements
+#: after it form one bottleneck residual block.
 RESIDUAL_BLOCK = 'residual'
 
-#: 每种块类型在「全整数写法」里默认使用的核边长序列(按元素循环套用)。
+#: Default kernel-size sequence used by each block type in the "all integers" notation
+#: (cycled over the elements).
 DEFAULT_KERNELS: Dict[str, Tuple[int, ...]] = {
     CONV_BLOCK: (3,),
     RESIDUAL_BLOCK: (3, 1, 3),
 }
 
-#: 单个段里允许的 2x2 stride=2 池化次数上限(官方配置最多两次)。
+#: Upper bound on the number of 2x2 stride=2 poolings inside one stage (the official
+#: configurations use at most two).
 MAX_POOL_PER_PART = 2
 
-#: 官方配置的骨干预卷积层数(不含末尾的 1x1 分类卷积):
-#: Darknet19 = 18 个卷积 + 1 个全连接分类层;Darknet53 = 52 个卷积 + 1 个全连接分类层。
-#: 本实现把分类层也写成 1x1 卷积,因此 ``num_classes > 0`` 时卷积总数分别正好是 19 和 53,
-#: 与网络名字里的 "19" / "53" 一一对应。
+#: Number of backbone convolutions in the official configurations (excluding the trailing 1x1
+#: classification convolution):
+#: Darknet19 = 18 convolutions + 1 fully connected classification layer; Darknet53 = 52
+#: convolutions + 1 fully connected classification layer.
+#: This implementation writes the classification layer as a 1x1 convolution too, so with
+#: ``num_classes > 0`` the total number of convolutions is exactly 19 and 53, matching the
+#: "19" / "53" in the network names one to one.
 EXPECTED_CONVS: Dict[str, int] = {'19': 18, '53': 52}
 
 
-#: 两个官方配置的完整结构描述。
+#: Complete structural description of the two official configurations.
 #:
-#: 每个变体给出 ``stem`` 与 ``prelude / body / coda`` 四段,外加全局池化与分类头:
+#: Every variant provides the four parts ``stem`` and ``prelude / body / coda``, plus global
+#: pooling and the classification head:
 #:
-#: - ``stem``:首卷积序列的 ``channels / kernels / strides``,``pool`` 表示其后是否接一次池化。
-#: - ``prelude / body / coda``:``maxpool`` 是段头 2x2 stride=2 池化次数,``blocks`` 是若干块,
-#:   每个块写成 ``(块类型, 通道规格)``。通道规格见 ``_expand_spec``:全整数时按
-#:   ``DEFAULT_KERNELS`` 循环套用核边长;全 ``(通道数, 核边长)`` 元组时逐层显式指定。
+#: - ``stem``: the ``channels / kernels / strides`` of the leading convolution sequence, where
+#:   ``pool`` says whether a pooling follows it.
+#: - ``prelude / body / coda``: ``maxpool`` is the number of leading 2x2 stride=2 poolings and
+#:   ``blocks`` are the blocks, each written as ``(block type, channel spec)``. See
+#:   ``_expand_spec`` for the channel spec: with all integers the kernel sizes of
+#:   ``DEFAULT_KERNELS`` are cycled; with all ``(channels, kernel size)`` tuples every layer is
+#:   given explicitly.
 #:
-#: 段的划分不是随意的:它同时决定 ``stage='all'`` 返回的三个尺度,所以按「每个下采样段一个块」
-#: 的粒度来切,让 prelude / body / coda 分别落在 8 / 16 / 32 倍下采样上(YOLOv3 的 FPN 尺度)。
+#: The split into stages is not arbitrary: it also determines the three scales returned by
+#: ``stage='all'``, so it is cut at the granularity of "one block per downsampling stage" so
+#: that prelude / body / coda land on 8 / 16 / 32 times downsampling (the FPN scales of YOLOv3).
 DARKNET_SPECS: Dict[str, Dict[str, Any]] = {
     '19': {
-        # 官方 cfg/darknet19.cfg:19 个权重层 = 18 个卷积 + 1 个全连接分类层,
-        # 下采样全部由 5 次 2x2 maxpool 完成(32 倍)。
+        # Official cfg/darknet19.cfg: 19 weight layers = 18 convolutions + 1 fully connected
+        # classification layer, and all downsampling is done by 5 2x2 maxpools (32x).
         'stem': {
             'channels': (32,),
             'kernels': (3,),
@@ -278,15 +310,17 @@ DARKNET_SPECS: Dict[str, Dict[str, Any]] = {
                 (CONV_BLOCK, ((1024, 3), (512, 1), (1024, 3), (512, 1), (1024, 3))),
             ),
         },
-        # 官方 cfg:``[avgpool] -> conv 1x1 filters=1000 activation=linear -> [softmax]``
+        # Official cfg: ``[avgpool] -> conv 1x1 filters=1000 activation=linear -> [softmax]``
         'avgpool': True,
         'num_classes': 1000,
     },
     '53': {
-        # 官方 cfg/darknet53.cfg:每个块以 stride=2 卷积下采样,块内是若干瓶颈残差块,
-        # 23 个残差块 / 52 个卷积 + 1 个全连接分类层 = 53 个权重层。
-        # 段划分按每段一个下采样卷积:prelude 是 8 倍下采样(52x52)、body 是 16 倍(26x26)、
-        # coda 是 32 倍(13x13),正好是 YOLOv3 的三个预测尺度。
+        # Official cfg/darknet53.cfg: every block downsamples with a stride=2 convolution and
+        # contains several bottleneck residual blocks: 23 residual blocks / 52 convolutions + 1
+        # fully connected classification layer = 53 weight layers.
+        # The stages are split as one downsampling convolution each: prelude is 8x downsampling
+        # (52x52), body is 16x (26x26) and coda is 32x (13x13), exactly the three prediction
+        # scales of YOLOv3.
         'stem': {
             'channels': (32,),
             'kernels': (3,),
@@ -296,25 +330,25 @@ DARKNET_SPECS: Dict[str, Dict[str, Any]] = {
         'prelude': {
             'maxpool': 0,
             'blocks': (
-                # 下采样 c64  + 1 个残差块  -> 8 倍下采样
+                # downsample c64  + 1 residual block  -> 8x downsampling
                 (RESIDUAL_BLOCK, ((64, 3),) + ((64, 1), (64, 3)) * 1),
-                # 下采样 c128 + 2 个残差块
+                # downsample c128 + 2 residual blocks
                 (RESIDUAL_BLOCK, ((128, 3),) + ((128, 1), (128, 3)) * 2),
             ),
         },
         'body': {
             'maxpool': 0,
             'blocks': (
-                # 下采样 c256 + 8 个残差块      -> 16 倍下采样
+                # downsample c256 + 8 residual blocks     -> 16x downsampling
                 (RESIDUAL_BLOCK, ((256, 3),) + ((256, 1), (256, 3)) * 8),
-                # 下采样 c512 + 8 个残差块
+                # downsample c512 + 8 residual blocks
                 (RESIDUAL_BLOCK, ((512, 3),) + ((512, 1), (512, 3)) * 8),
             ),
         },
         'coda': {
             'maxpool': 0,
             'blocks': (
-                # 下采样 c1024 + 4 个残差块     -> 32 倍下采样(YOLOv3 的第三个预测尺度)
+                # downsample c1024 + 4 residual blocks    -> 32x downsampling (YOLOv3's third scale)
                 (RESIDUAL_BLOCK, ((1024, 3),) + ((1024, 1), (1024, 3)) * 4),
             ),
         },
@@ -326,23 +360,26 @@ DARKNET_SPECS: Dict[str, Dict[str, Any]] = {
 
 class Darknet(BasicModel):
     '''
-    Darknet 主干,按官方 cfg 复原 YOLOv2 的 Darknet-19 与 YOLOv3 的 Darknet-53。
+    Darknet backbone, reproducing the Darknet-19 of YOLOv2 and the Darknet-53 of YOLOv3 from
+    the official cfg files.
 
-    网络分四段装配,命名沿用 YOLOv1 的 ``Darknet``::
+    The network is assembled from four stages, keeping the ``Darknet`` naming of YOLOv1::
 
-        stem     : 首卷积(检测网络取特征时就截到这里)
-        prelude  : 段头若干次 2x2 stride=2 池化 + 若干块
-        body     : 段头池化 + 中间若干块
-        coda     : 段头池化 + 最后若干块,输出最高层语义特征
+        stem     : leading convolution (feature extraction for detection stops here)
+        prelude  : several leading 2x2 stride=2 poolings + several blocks
+        body     : leading pooling + several blocks in the middle
+        coda     : leading pooling + the last blocks, outputs the highest-level semantic features
 
-    其中每段由「段头池化次数 + 若干块」组成,块又分两种:
+    Every stage consists of "a number of leading poolings + several blocks", and there are two
+    kinds of block:
 
-    - **conv 块**:若干普通卷积,块首卷积负责下采样与换通道,其余卷积按 3x3 升通道 / 1x1 压回来
-      交替(Darknet19 的写法)。
-    - **residual 块**:块首一个下采样卷积,其后每两个卷积组成一个 1x1 -> 3x3 的瓶颈残差块
-      (Darknet53 的写法)。
+    - **conv block**: several plain convolutions, where the leading convolution downsamples and
+      changes the number of channels and the remaining ones alternate 3x3 up-channel / 1x1
+      down-channel (the Darknet19 style).
+    - **residual block**: one downsampling convolution at the start, after which every two
+      convolutions form a 1x1 -> 3x3 bottleneck residual block (the Darknet53 style).
 
-    ``variant='19'``(输入 416;下采样全部由 5 次 maxpool 完成)::
+    ``variant='19'`` (input 416; all downsampling is done by 5 maxpools)::
 
         stem     : conv 3x3 s1 c32                                      -> 416 x 416
         prelude  : pool -> conv 3x3 c64                                 -> 208 x 208  (2x)
@@ -352,7 +389,8 @@ class Darknet(BasicModel):
                    pool -> conv c1024 -> c512 -> c1024 -> c512 -> c1024 ->  13 x  13  (32x)
         avgpool -> conv 1x1 c1000 -> [B, 1000]
 
-    ``variant='53'``(输入 416;下采样由每个块开头的 stride=2 卷积完成)::
+    ``variant='53'`` (input 416; downsampling is done by the stride=2 convolution at the start of
+    every block)::
 
         stem     : conv 3x3 s1 c32                                      -> 416 x 416
         prelude  : conv 3x3 s2 c64   -> Residual c64            x1      -> 208 x 208
@@ -362,91 +400,118 @@ class Darknet(BasicModel):
         coda     : conv 3x3 s2 c1024 -> Residual c1024          x4      ->  13 x  13  (32x)
         avgpool -> conv 1x1 c1000 -> [B, 1000]
 
-    命名与官方 cfg 的对应关系:stem 对应第一个 ``[convolutional]``;prelude/body/coda 对应被
-    ``[maxpool]``(Darknet19)或 ``# Downsample``(Darknet53)切开的各段;分类头对应 cfg 末尾的
-    ``[avgpool] -> conv 1x1 filters=1000``。下采样只发生在两处 —— 段头的 2x2 stride=2 池化,
-    或块首的 stride=2 卷积,同一段内两者互斥,因此总倍数恒为 32。
+    How the naming maps onto the official cfg: stem is the first ``[convolutional]``; prelude /
+    body / coda are the stages cut apart by ``[maxpool]`` (Darknet19) or ``# Downsample``
+    (Darknet53); the classification head is the trailing
+    ``[avgpool] -> conv 1x1 filters=1000``. Downsampling only happens in two places -- the
+    leading 2x2 stride=2 pooling of a stage, or the stride=2 convolution at the start of a block
+    -- and the two are mutually exclusive inside one stage, so the total factor is always 32.
 
-    三种用法:
+    Three ways to use it:
 
-    - **ImageNet 分类**(默认 ``num_classes=1000``):末尾接全局平均池化与 1x1 分类卷积,
-      与官方 cfg 完全一致;``conv_count`` 分别是 19 与 53,正是两个网络名字的由来。
-    - **检测主干**(``num_classes=0``):去掉分类头,``forward`` 直接返回 32 倍下采样的网格特征图
-      (416 输入时为 13x13),交给检测头。
-    - **多尺度特征**(``forward(x, stage='all')``):返回 ``prelude / body / coda`` 三个尺度的特征图。
-      ``variant='53'`` 下是 104x104(8x)/ 26x26(16x)/ 13x13(32x),正是 YOLOv3 的 FPN 尺度;
-      ``variant='19'`` 下是 208x208(2x)/ 52x52(8x)/ 13x13(32x)。
+    - **ImageNet classification** (the default ``num_classes=1000``): global average pooling and
+      a 1x1 classification convolution at the end, exactly as in the official cfg; ``conv_count``
+      is 19 and 53 respectively, which is where the two network names come from.
+    - **Detection backbone** (``num_classes=0``): the classification head is removed and
+      ``forward`` returns the grid feature map downsampled by 32 (13x13 for a 416 input) for the
+      detection head.
+    - **Multi-scale features** (``forward(x, stage='all')``): returns the feature maps of the
+      three ``prelude / body / coda`` scales. For ``variant='53'`` these are 104x104 (8x) /
+      26x26 (16x) / 13x13 (32x), exactly the FPN scales of YOLOv3; for ``variant='19'`` they are
+      208x208 (2x) / 52x52 (8x) / 13x13 (32x).
 
-    **尺寸与多尺度训练**
+    **Size and multi-scale training**
 
-    主干是「全卷积 + 全局平均池化 + 1x1 分类卷积」,没有 Flatten 全连接,所以**任意 32 的倍数边长
-    都能前向**,``size`` 只决定 ``grid_size`` 这个记录值,不影响任何权重形状(参数量恒定)。因此同一个
-    模型实例可以在训练中不断换尺寸 —— 这正是消除"训练 256、推理 416"分布失配的正规做法:
+    The backbone is "fully convolutional + global average pooling + 1x1 classification
+    convolution" with no Flatten fully connected layer, so **any side length that is a multiple
+    of 32 can be forwarded**; ``size`` only determines the recorded ``grid_size`` and affects no
+    weight shape (the parameter count is constant). The same model instance can therefore change
+    size throughout training -- which is the standard way to remove the "train at 256, infer at
+    416" distribution mismatch:
 
-    1. 每个 batch(或每几个 epoch)用 ``sample_train_size`` 抽一档边长,把图 resize/random-crop 到
-       该边长再前向。batch norm 的 running stats 由前向自动累积,不需要额外操作。
-    2. 目标部署尺寸要占足够比例(用 ``sample_train_size(focus=(416,))`` 保证),否则统计量仍会被
-       其它尺寸主导。官方 ``darknet19.cfg`` 的 ``min_crop=128, max_crop=448`` 就是这个思路。
-    3. 训练完直接在目标尺寸上评估,不要拿训练尺寸的数字外推。
+    1. Every batch (or every few epochs) draw a side length with ``sample_train_size``, resize /
+       random-crop the image to it and forward. The running stats of batch norm accumulate from
+       the forward passes automatically, so no extra work is needed.
+    2. The deployment size must take a large enough share (guaranteed with
+       ``sample_train_size(focus=(416,))``), otherwise the statistics are still dominated by the
+       other sizes. The ``min_crop=128, max_crop=448`` of the official ``darknet19.cfg`` follows
+       exactly this idea.
+    3. Evaluate directly at the deployment size once training is done; do not extrapolate from
+       the numbers measured at the training size.
 
-    想要严格复现单尺寸实验时,``forward`` 传 ``keep_size=True`` 可以恢复"边长必须等于构造时 size"的
-    旧校验。注意 batch norm 的统计量与分辨率是绑定的:如果只用一档尺寸训练,换尺寸推理就会掉点,
-    此时要么按上面做多尺度训练,要么事后在目标尺寸上重估统计量。
+    To reproduce a single-size experiment strictly, pass ``keep_size=True`` to ``forward`` to
+    restore the old check that "the side length must equal the ``size`` used at construction
+    time". Note that the batch norm statistics are tied to the resolution: training at a single
+    size makes inference at another size lose accuracy, in which case either do multi-scale
+    training as above or re-estimate the statistics at the target size afterwards.
 
     Attributes:
-        variant (str): '19' 或 '53',决定深度与通道规格。
-        num_classes (int): 类别数,0 表示已去掉分类头。
-        size (int): 构造时声明的参考输入边长(也是 ``verify_shapes`` 与 ``grid_size`` 用的那一档);
-            它不限制前向:任何 32 的倍数的边长都能直接吃。
-        downsample (int): 全局下采样倍数,固定 32。
-        grid_size (int): ``size`` 下的输出特征图边长。
-        stem (nn.Sequential): 首卷积序列。
-        prelude (nn.Sequential): 第一段。
-        body (nn.Sequential): 中间段。
-        coda (nn.Sequential): 最后一段。
-        avgpool (nn.AdaptiveAvgPool2d, optional): 全局平均池化,``num_classes=0`` 时为 None。
-        classifier (nn.Conv2d, optional): 1x1 分类卷积,``num_classes=0`` 时为 None。
-        block_channels (Tuple[int, ...]): 逐块输入通道数。
-        stage_channels (Tuple[int, int, int]): prelude / body / coda 的输出通道数。
-        conv_specs (Tuple[Tuple[int, int], ...]): 逐卷积的 ``(输出通道, 核边长)`` 表(含分类卷积)。
-        conv_count (int): 卷积层总数(``num_classes>0`` 时为 19 或 53,否则各减 1)。
-        residual_count (int): 残差块总数(Darknet19 为 0,Darknet53 为 23)。
+        variant (str): '19' or '53', determining the depth and the channel specifications.
+        num_classes (int): Number of classes; 0 means the classification head was removed.
+        size (int): Reference input side length declared at construction time (also the one used
+            by ``verify_shapes`` and ``grid_size``); it does not restrict the forward pass: any
+            side length that is a multiple of 32 is accepted.
+        downsample (int): Global downsampling factor, fixed at 32.
+        grid_size (int): Side length of the output feature map at ``size``.
+        stem (nn.Sequential): The leading convolution sequence.
+        prelude (nn.Sequential): The first stage.
+        body (nn.Sequential): The middle stage.
+        coda (nn.Sequential): The last stage.
+        avgpool (nn.AdaptiveAvgPool2d, optional): Global average pooling, None when
+            ``num_classes=0``.
+        classifier (nn.Conv2d, optional): 1x1 classification convolution, None when
+            ``num_classes=0``.
+        block_channels (Tuple[int, ...]): Input channels of every block.
+        stage_channels (Tuple[int, int, int]): Output channels of prelude / body / coda.
+        conv_specs (Tuple[Tuple[int, int], ...]): Per-convolution ``(output channels, kernel
+            size)`` table (including the classification convolution).
+        conv_count (int): Total number of convolution layers (19 or 53 when ``num_classes>0``,
+            one fewer otherwise).
+        residual_count (int): Total number of residual blocks (0 for Darknet19, 23 for
+            Darknet53).
     '''
 
-    #: 官方配置表,键为变体名。
+    #: The official configuration table, keyed by variant name.
     SPECS = DARKNET_SPECS
 
     def __setattr__(self, name: str, value: Any) -> None:
         '''
-        拦截 ``activation`` 赋值,避免把共享的激活模块注册成子模块。
+        Intercepts assignment to ``activation`` so that a shared activation module is not
+        registered as a submodule.
 
-        传入的激活是 ``BasicModel`` 子类(例如 ``LeakyReLU(0.1)``)时,直接赋值会让
-        ``nn.Module`` 把它登记进 ``_modules``,于是 ``state_dict`` 里会多出
-        ``activation.negative_slope`` 这类条目,破坏 ``from_remote`` / ``load_state_dict``
-        的键匹配。这里把激活拆成两部分:``activation`` 只给出稳定的字符串描述,原始对象放在
-        普通属性 ``_activation_value`` 里(不进 ``_modules``),建模时用 ``activation_module``
-        取回 —— 这样 ``LeakyReLU(0.1)`` 的斜率能原样生效。
+        When the activation being passed in is a ``BasicModel`` subclass (for example
+        ``LeakyReLU(0.1)``), assigning it directly makes ``nn.Module`` register it in
+        ``_modules``, so ``state_dict`` gains entries such as ``activation.negative_slope`` and
+        the key matching of ``from_remote`` / ``load_state_dict`` breaks. Here the activation is
+        split in two: ``activation`` only exposes a stable string description, while the original
+        object lives in the plain attribute ``_activation_value`` (which never enters
+        ``_modules``) and is retrieved through ``activation_module`` when building the model --
+        this way the slope of ``LeakyReLU(0.1)`` takes effect unchanged.
 
         Args:
-            name (str): 属性名。
-            value (Any): 属性值。
+            name (str): Attribute name.
+            value (Any): Attribute value.
 
         Raises:
-            ValueError: 当 ``activation`` 收到带可学习参数的模块,或类型不受支持时。
+            ValueError: If ``activation`` receives a module with learnable parameters, or an
+                unsupported type.
         '''
         if name == 'activation':
             if isinstance(value, BasicModel):
                 params = [n for n, _ in value.named_parameters()]
                 if params:
                     raise ValueError(
-                        f'激活模块 {type(value).__name__} 带可学习参数 {params},'
-                        f'不支持按共享实例传入,请改传激活名称字符串。'
+                        f'activation module {type(value).__name__} has learnable parameters '
+                        f'{params}, so it cannot be passed as a shared instance; pass the '
+                        f'activation name string instead'
                     )
             elif value is not None and not isinstance(value, str):
                 raise ValueError(
-                    f'activation 需要是字符串、None 或无参数激活模块,收到 {type(value).__name__}。'
+                    f'activation must be a string, None or a parameter-free activation module, '
+                    f'got {type(value).__name__}'
                 )
-            # 两个属性都直接写实例字典:绕开 nn.Module 的子模块登记,state_dict 才干净。
+            # Both attributes are written straight into the instance dict: this bypasses the
+            # submodule registration of nn.Module and keeps state_dict clean.
             object.__setattr__(self, '_activation_value', value)
             object.__setattr__(self, '_activation_name', activation_name(value))
             return
@@ -456,17 +521,20 @@ class Darknet(BasicModel):
     @property
     def activation(self) -> Optional[str]:
         '''
-        激活配置的字符串描述:'leakyrelu'、None,或传入实例时的类名(例如 'leakyrelu')。
+        String description of the activation configuration: 'leakyrelu', None, or the class
+        name when an instance was passed in (for example 'leakyrelu').
         '''
         return getattr(self, '_activation_name', None)
 
     @property
     def activation_module(self) -> Union[str, None, nn.Module]:
         '''
-        返回实际参与建模的激活对象:传入模块实例时是该实例本身,否则是字符串名称。
+        Returns the activation object actually used when building the model: the instance
+        itself when a module was passed in, otherwise the string name.
 
-        建模时一律用它而不是 ``activation`` 字符串,这样 ``LeakyReLU(0.1)`` 这种自定义斜率
-        才能原样生效 —— 字符串 'leakyrelu' 走 ``get_activation`` 会退回 codon 的默认斜率 0.01。
+        Model building always uses this instead of the ``activation`` string, so that a custom
+        slope such as ``LeakyReLU(0.1)`` takes effect unchanged -- the string 'leakyrelu' going
+        through ``get_activation`` would fall back to the codon default slope of 0.01.
         '''
         return getattr(self, '_activation_value', None)
 
@@ -480,31 +548,35 @@ class Darknet(BasicModel):
         activation: Union[str, BasicModel] = act
     ):
         '''
-        初始化 Darknet 主干。
+        Initializes the Darknet backbone.
 
         Args:
-            variant (str, optional): '19'(YOLOv2)或 '53'(YOLOv3)。Defaults to '19'.
-            in_channels (int, optional): 输入图像通道数。Defaults to 3.
-            num_classes (int, optional): 类别数;0 表示去掉全局池化与分类卷积,只输出特征图。
+            variant (str, optional): '19' (YOLOv2) or '53' (YOLOv3). Defaults to '19'.
+            in_channels (int, optional): Number of input image channels. Defaults to 3.
+            num_classes (int, optional): Number of classes; 0 removes global pooling and the
+                classification convolution so that only the feature map is output.
                 Defaults to 1000.
-            size (int, optional): 输入图像边长,必须是 32 的倍数。416 得到 13x13 网格,
-                608 得到 19x19,ImageNet 预训练常用 256。这个值只作为参考档位(决定 ``grid_size``
-                与构造期形状自检用的尺寸),前向可以换任意 32 的倍数的边长。Defaults to 416.
-            norm (str, optional): 归一化类型,官方配置为 'batch';传 None 可关掉归一化。
-                Defaults to 'batch'.
-            activation (Union[str, BasicModel], optional): 激活函数,默认斜率 0.1 的 leaky ReLU。
-                Defaults to act.
+            size (int, optional): Input image side length, which must be a multiple of 32. 416
+                gives a 13x13 grid, 608 gives 19x19 and ImageNet pretraining commonly uses 256.
+                This value is only a reference (it determines ``grid_size`` and the size used for
+                the shape self-check at construction time), while the forward pass accepts any
+                side length that is a multiple of 32. Defaults to 416.
+            norm (str, optional): Normalization type; the official configuration uses 'batch'.
+                Pass None to disable normalization. Defaults to 'batch'.
+            activation (Union[str, BasicModel], optional): Activation function, a leaky ReLU
+                with slope 0.1 by default. Defaults to act.
 
         Raises:
-            ValueError: 当 ``variant`` 不在配置表里、``size`` 不是 32 的倍数,
-                或规格里的通道/核边长自相矛盾时。
+            ValueError: If ``variant`` is not in the configuration table, if ``size`` is not a
+                multiple of 32, or if the channels/kernel sizes inside a specification contradict
+                each other.
         '''
         super().__init__()
 
         variant = str(variant)
         if variant not in self.SPECS:
             raise ValueError(
-                f'不支持的 Darknet 变体 {variant!r},可选:{sorted(self.SPECS)}。'
+                f'unsupported Darknet variant {variant!r}, choose from {sorted(self.SPECS)}'
             )
 
         self.variant = variant
@@ -545,105 +617,119 @@ class Darknet(BasicModel):
             1 for module in self.modules() if isinstance(module, ResidualBlock)
         )
 
-        # 构造期的最后一步:用一块假输入真的跑一遍,让「通道接不上」这类错误在实例化时就暴露,
-        # 而不是等到训练/推理时才发现。见 verify_shapes。
+        # The last step of construction: really run a dummy input so that errors such as
+        # "channels do not line up" surface at instantiation time instead of during training or
+        # inference. See verify_shapes.
         self.verify_shapes()
 
     # ------------------------------------------------------------------
-    # 配置推导
+    # Configuration derivation
     # ------------------------------------------------------------------
 
     @staticmethod
     def resolve_grid(size: int, downsample: int = GLOBAL_DOWNSAMPLE) -> int:
         '''
-        校验输入边长并推导输出特征图边长。
+        Validates the input side length and derives the output feature map side length.
 
-        Darknet 的下采样由 maxpool 与 stride=2 卷积组成,两者对偶数边长都是精确的 2 倍缩小,
-        所以总倍数固定为 ``downsample``(Darknet19/53 都是 32)。
+        The downsampling of Darknet consists of maxpools and stride=2 convolutions, both of
+        which are exact 2x reductions for even side lengths, so the total factor is fixed at
+        ``downsample`` (32 for both Darknet19 and Darknet53).
 
         Args:
-            size (int): 输入图像边长。
-            downsample (int, optional): 全局下采样倍数。Defaults to 32.
+            size (int): Input image side length.
+            downsample (int, optional): Global downsampling factor. Defaults to 32.
 
         Returns:
-            int: 输出特征图边长,即 ``size // downsample``。
+            int: Side length of the output feature map, i.e. ``size // downsample``.
 
         Raises:
-            ValueError: 当 ``size`` 不是 ``downsample`` 的倍数时。
+            ValueError: If ``size`` is not a multiple of ``downsample``.
         '''
         if size % downsample != 0:
             raise ValueError(
-                f'输入边长 {size} 不是 {downsample} 的整数倍,{size}x{size} 无法整除下采样。'
-                f'最接近的合法边长是 {Darknet.nearest_valid_size(size, downsample)}。'
+                f'input side {size} is not a multiple of {downsample}, so {size}x{size} cannot '
+                f'be downsampled exactly; the closest valid side is '
+                f'{Darknet.nearest_valid_size(size, downsample)}'
             )
         return size // downsample
 
     @staticmethod
     def nearest_valid_size(size: int, downsample: int = GLOBAL_DOWNSAMPLE) -> int:
         '''
-        求最接近的合法输入边长(``downsample`` 的倍数)。
+        Returns the closest valid input side length (a multiple of ``downsample``).
 
         Args:
-            size (int): 期望的输入边长。
-            downsample (int, optional): 全局下采样倍数。Defaults to 32.
+            size (int): Desired input side length.
+            downsample (int, optional): Global downsampling factor. Defaults to 32.
 
         Returns:
-            int: 最接近的 ``downsample`` 倍数,最小为 ``downsample``。
+            int: The closest multiple of ``downsample``, at least ``downsample``.
         '''
         return max(downsample, int(round(size / downsample)) * downsample)
 
     def _stem_schema(self) -> Dict[str, Any]:
-        '''返回当前变体的 stem 规格,并把 ``channels/kernels/strides`` 逐项校验成整数元组。'''
+        '''Returns the stem specification of the current variant and validates
+        ``channels/kernels/strides`` into tuples of ints item by item.'''
         schema = self.SPECS[self.variant]['stem']
         channels = tuple(int(c) for c in schema['channels'])
         kernels = tuple(int(k) for k in schema['kernels'])
         strides = tuple(int(s) for s in schema['strides'])
         if not (len(channels) == len(kernels) == len(strides)) or not channels:
             raise ValueError(
-                f'stem 的 channels/kernels/strides 必须等长且非空,'
-                f'收到 {channels} / {kernels} / {strides}。'
+                f'the channels/kernels/strides of the stem must have equal length and be '
+                f'non-empty, got {channels} / {kernels} / {strides}'
             )
         if any(c <= 0 for c in channels) or any(s not in (1, 2) for s in strides):
-            raise ValueError(f'stem 的通道数须为正、步长须为 1 或 2,收到 {channels} / {strides}。')
+            raise ValueError(
+                f'the stem channels must be positive and the strides must be 1 or 2, got '
+                f'{channels} / {strides}'
+            )
         if any(k <= 0 or k % 2 == 0 for k in kernels):
-            raise ValueError(f'stem 的核边长必须是正奇数,收到 {kernels}。')
+            raise ValueError(f'the stem kernel sizes must be positive odd numbers, got {kernels}')
         return {'channels': channels, 'kernels': kernels, 'strides': strides,
                 'pool': bool(schema['pool'])}
 
     @staticmethod
     def _expand_spec(spec: Sequence[Any], block_type: str) -> Tuple[Tuple[int, int], ...]:
         '''
-        把块的通道规格展开成逐卷积的 ``(out_channels, kernel_size)`` 表。
+        Expands the channel specification of a block into a per-convolution
+        ``(out_channels, kernel_size)`` table.
 
-        两种等价写法(与官方 cfg 的行序一一对应):
+        Two equivalent notations (matching the line order of the official cfg):
 
-        - **全整数**:每个整数是一个卷积的输出通道数,核边长按 ``DEFAULT_KERNELS[block_type]``
-          循环套用(residual 块为 3x3 / 1x1 / 3x3 循环,正好是「下采样卷积 + (1x1, 3x3) 对」)。
-        - **全 (通道数, 核边长) 元组**:逐层显式指定核边长,用于默认模式表达不了的地方
-          (例如 residual 块里压缩比不是 1:1)。
+        - **All integers**: every integer is the number of output channels of one convolution and
+          the kernel sizes are cycled from ``DEFAULT_KERNELS[block_type]`` (3x3 / 1x1 / 3x3 for a
+          residual block, which is exactly "downsampling convolution + (1x1, 3x3) pairs").
+        - **All (channels, kernel size) tuples**: the kernel size of every layer is given
+          explicitly, for cases the default notation cannot express (such as a residual block
+          whose compression ratio is not 1:1).
 
         Args:
-            spec (Sequence[Any]): 该块的通道规格。
-            block_type (str): ``CONV_BLOCK`` 或 ``RESIDUAL_BLOCK``。
+            spec (Sequence[Any]): Channel specification of this block.
+            block_type (str): ``CONV_BLOCK`` or ``RESIDUAL_BLOCK``.
 
         Returns:
-            Tuple[Tuple[int, int], ...]: 逐卷积的 (输出通道, 核边长)。
+            Tuple[Tuple[int, int], ...]: Per-convolution (output channels, kernel size).
 
         Raises:
-            ValueError: 当规格为空、两种写法混用,或通道/核边长非法时。
+            ValueError: If the specification is empty, if the two notations are mixed, or if a
+                channel count / kernel size is invalid.
         '''
         if block_type not in DEFAULT_KERNELS:
-            raise ValueError(f'不支持的块类型 {block_type!r},可选:{sorted(DEFAULT_KERNELS)}。')
+            raise ValueError(
+                f'unsupported block type {block_type!r}, choose from {sorted(DEFAULT_KERNELS)}'
+            )
         if not spec:
-            raise ValueError(f'块规格不能为空,收到 {spec!r}。')
+            raise ValueError(f'the block specification cannot be empty, got {spec!r}')
 
         if all(isinstance(item, int) for item in spec):
             kernels = DEFAULT_KERNELS[block_type]
             if len(spec) % len(kernels) != 0:
                 raise ValueError(
-                    f'{block_type} 块的整数写法长度必须是 {len(kernels)} 的整数倍,'
-                    f'收到 {len(spec)} 个通道 {tuple(spec)};'
-                    f'需要逐层指定核边长时请写成 (通道数, 核边长) 元组。'
+                    f'the integer notation of a {block_type} block must have a length that is '
+                    f'a multiple of {len(kernels)}, got {len(spec)} channels {tuple(spec)}; to '
+                    f'specify the kernel size of each layer, write (channels, kernel size) '
+                    f'tuples instead'
                 )
             expanded = tuple(
                 (int(channel), kernels[index % len(kernels)])
@@ -653,30 +739,33 @@ class Darknet(BasicModel):
             expanded = tuple((int(channel), int(kernel)) for channel, kernel in spec)
         else:
             raise ValueError(
-                f'{block_type} 块的规格要么全是整数(按默认核边长),要么全是 (通道数, 核边长) 元组,'
-                f'不能混用,收到 {spec!r}。'
+                f'the specification of a {block_type} block must be either all integers (using '
+                f'the default kernel sizes) or all (channels, kernel size) tuples, mixing is not '
+                f'allowed, got {spec!r}'
             )
 
         for channel, kernel in expanded:
             if channel <= 0 or kernel <= 0 or kernel % 2 == 0:
                 raise ValueError(
-                    f'通道数必须是正整数、核边长必须是正奇数,收到 (通道={channel}, 核={kernel})。'
+                    f'channel counts must be positive integers and kernel sizes must be '
+                    f'positive odd numbers, got (channels={channel}, kernel={kernel})'
                 )
         return expanded
 
     def _part_schema(self, part: str) -> Dict[str, Any]:
-        '''返回某一段的规格,并校验 ``maxpool`` 与块的写法。'''
+        '''Returns the specification of one stage and validates ``maxpool`` and the block
+        notation.'''
         if part not in ('prelude', 'body', 'coda'):
-            raise ValueError(f'不支持的段名 {part!r}。')
+            raise ValueError(f'unsupported stage name {part!r}')
         schema = self.SPECS[self.variant][part]
         pools = int(schema['maxpool'])
         if not 0 <= pools <= MAX_POOL_PER_PART:
             raise ValueError(
-                f'{self.variant} 的 {part} 段声明了 {pools} 次池化,'
-                f'必须在 0..{MAX_POOL_PER_PART} 之间。'
+                f'the {part} stage of {self.variant} declares {pools} poolings, which must be '
+                f'between 0 and {MAX_POOL_PER_PART}'
             )
         if not schema['blocks']:
-            raise ValueError(f'{self.variant} 的 {part} 段至少需要一个块。')
+            raise ValueError(f'the {part} stage of {self.variant} needs at least one block')
         return {'maxpool': pools, 'blocks': tuple(schema['blocks'])}
 
     def _walk_block(
@@ -686,41 +775,49 @@ class Darknet(BasicModel):
         block_name: str
     ) -> int:
         '''
-        沿一个块的卷积序列推导通道流,并校验配置内部自洽。
+        Derives the channel flow along the convolution sequence of one block and validates that
+        the configuration is internally consistent.
 
-        规则与官方 cfg 的写法一一对应:
+        The rules map one to one onto the notation of the official cfg:
 
-        - 把序列按核边长切成若干「连续同核」的段。同一段里的层依次吃同一张特征图,因此通道数
-          必须完全一致 —— 这既解释了 3x3 升通道之后为什么必须紧跟 1x1 压回来,也解释了
-          Darknet53 残差块里 ``filters=C`` 连续重复的写法。
-        - 跨段的通道变化是合法的:1x1 压缩(Darknet19 的 128 -> 64)、3x3 投影
-          (Darknet53 的 32 -> 64)都靠换核来换通道。
-        - 块的入口通道由上游决定,所以**首层允许任意改通道**(它就是本块的下采样/投影卷积);
-          其余各层的输入必须由块内自己对齐,不一致时在这里直接报错。
+        - The sequence is cut by kernel size into runs of consecutive layers that share a kernel.
+          The layers of one run consume the same feature map in turn, so their channel counts must
+          be identical -- this explains both why a 3x3 up-channel must be followed immediately by
+          a 1x1 down-channel and why ``filters=C`` repeats consecutively inside a Darknet53
+          residual block.
+        - A channel change across runs is legal: the 1x1 squeeze (128 -> 64 in Darknet19) and the
+          3x3 projection (32 -> 64 in Darknet53) both change channels by switching kernels.
+        - The entry channels of a block are decided by the upstream, so **the first layer may
+          change the channel count freely** (it is the downsampling/projection convolution of this
+          block); the inputs of every remaining layer must be lined up inside the block itself and
+          an inconsistency raises here immediately.
 
         Args:
-            expanded (Sequence[Tuple[int, int]]): ``_expand_spec`` 展开的逐卷积 (通道, 核)。
-            block_type (str): ``CONV_BLOCK`` 或 ``RESIDUAL_BLOCK``。
-            block_name (str): 报错信息里使用的块名字。
+            expanded (Sequence[Tuple[int, int]]): The per-convolution (channels, kernel) expanded
+                by ``_expand_spec``.
+            block_type (str): ``CONV_BLOCK`` or ``RESIDUAL_BLOCK``.
+            block_name (str): Block name used in error messages.
 
         Returns:
-            int: 块的输出通道数。
+            int: Number of output channels of the block.
 
         Raises:
-            ValueError: 同核段内通道不一致,或残差规格不合法时。
+            ValueError: If the channels inside a single-kernel run disagree, or if the residual
+                specification is invalid.
         '''
         if block_type == RESIDUAL_BLOCK:
             if len(expanded) < 3 or len(expanded) % 2 == 0:
                 raise ValueError(
-                    f'{block_name} 的残差规格必须是 1 + 2n 个卷积'
-                    f'(下采样卷积 + n 个 (1x1, 3x3) 对),收到 {expanded}。'
+                    f'the residual specification of {block_name} must be 1 + 2n convolutions '
+                    f'(one downsampling convolution + n (1x1, 3x3) pairs), got {expanded}'
                 )
             for index in range(1, len(expanded) - 1, 2):
                 inner, outer = expanded[index][0], expanded[index + 1][0]
                 if inner != outer:
                     raise ValueError(
-                        f'{block_name} 第 {(index + 1) // 2} 个残差块的 1x1 与 3x3 输出通道必须相同'
-                        f'(shortcut 按元素相加),收到 {inner} 与 {outer}。'
+                        f'the 1x1 and 3x3 output channels of residual block {(index + 1) // 2} '
+                        f'of {block_name} must be identical (the shortcut is added '
+                        f'element-wise), got {inner} and {outer}'
                     )
 
         start = 0
@@ -732,15 +829,17 @@ class Darknet(BasicModel):
             group = expanded[start:end + 1]
 
             if len(group) > 1 and start:
-                # 连续同核的若干层叠加在同一张特征图上,通道数必须一致;段首那组由上游决定输入,
-                # 所以只要求组内一致,不与上游比较。
+                # Several consecutive layers with the same kernel stack on one feature map, so
+                # their channel counts must agree; the leading run has its input decided by the
+                # upstream, so only agreement inside the run is required, not with the upstream.
                 first_channel = group[0][0]
                 for offset, (channel, _) in enumerate(group[1:], start=1):
                     if channel != first_channel:
                         raise ValueError(
-                            f'{block_name} 第 {start + offset + 1} 层的通道衔接断裂:'
-                            f'连续的 {kernel}x{kernel} 卷积共享同一张特征图,'
-                            f'但前面是 {first_channel} 通道、这里写的是 {channel} 通道。'
+                            f'the channel flow of {block_name} breaks at layer '
+                            f'{start + offset + 1}: consecutive {kernel}x{kernel} convolutions '
+                            f'share one feature map, but the previous one has {first_channel} '
+                            f'channels while this one declares {channel}'
                         )
             start = end + 1
 
@@ -748,19 +847,24 @@ class Darknet(BasicModel):
 
     def resolve_conv_specs(self) -> Tuple[Tuple[int, int], ...]:
         '''
-        按官方 cfg 的顺序展开全部卷积:stem -> prelude -> body -> coda -> 分类卷积。
+        Expands every convolution in the order of the official cfg: stem -> prelude -> body ->
+        coda -> classification convolution.
 
-        同时做两件事:
+        It does two things at the same time:
 
-        1. 逐块校验通道衔接(见 ``_walk_block``),让配置错误在构造期暴露,而不是等到前向时报
-           ``mat1 and mat2 shapes cannot be multiplied`` 这类难以定位的错误。
-        2. 收集逐卷积的 ``(输出通道, 核边长)`` 表,供下游(YOLO 检测头、形状检查)直接读取。
+        1. Validate the channel flow block by block (see ``_walk_block``), so configuration errors
+           surface at construction time instead of raising hard-to-locate errors such as
+           ``mat1 and mat2 shapes cannot be multiplied`` during the forward pass.
+        2. Collect the per-convolution ``(output channels, kernel size)`` table for downstream use
+           (the YOLO detection head, the shape checks).
 
         Returns:
-            Tuple[Tuple[int, int], ...]: 逐卷积的 ``(输出通道, 核边长)`` 表(含分类卷积)。
+            Tuple[Tuple[int, int], ...]: Per-convolution ``(output channels, kernel size)`` table
+                (including the classification convolution).
 
         Raises:
-            ValueError: 当块内通道衔接断裂,或残差规格不合法时。
+            ValueError: If the channel flow inside a block breaks, or if a residual specification
+                is invalid.
         '''
         stem = self._stem_schema()
         specs: List[Tuple[int, int]] = list(zip(stem['channels'], stem['kernels']))
@@ -769,7 +873,7 @@ class Darknet(BasicModel):
             schema = self._part_schema(part)
             for index, (block_type, spec) in enumerate(schema['blocks']):
                 expanded = self._expand_spec(spec, block_type)
-                self._walk_block(expanded, block_type, f'{part} 段第 {index + 1} 个块')
+                self._walk_block(expanded, block_type, f'block {index + 1} of the {part} stage')
                 specs.extend(expanded)
 
         if self.num_classes:
@@ -778,19 +882,23 @@ class Darknet(BasicModel):
 
     def resolve_block_strides(self) -> Tuple[Tuple[str, int, int], ...]:
         '''
-        推导逐块的输入通道与块首卷积的步长。
+        Derives the input channels of every block and the stride of its leading convolution.
 
-        步长规则与官方 cfg 的 ``[maxpool]`` / ``# Downsample`` 完全对应:
+        The stride rules correspond exactly to ``[maxpool]`` / ``# Downsample`` in the official
+        cfg:
 
-        - 段内有池化时:池化完成本段的下采样,所以**第一个块**的块首卷积步长为 1,
-          其余块各用 stride=2 卷积再下采样一次。
-        - 段内没有池化时:每个块的块首卷积都是 stride=2。
+        - When the stage has poolings: the poolings perform the downsampling of the stage, so the
+          leading convolution of the **first block** has stride 1 and every remaining block
+          downsamples once more with a stride=2 convolution.
+        - When the stage has no pooling: the leading convolution of every block has stride 2.
 
         Returns:
-            Tuple[Tuple[str, int, int], ...]: 逐块的 ``(块名, 输入通道, 块首卷积步长)``。
+            Tuple[Tuple[str, int, int], ...]: Per-block ``(block name, input channels, stride of
+                the leading convolution)``.
 
         Raises:
-            ValueError: 当推导出的下采样次数与 ``log2(downsample)`` 不符时。
+            ValueError: If the derived number of downsampling steps does not match
+                ``log2(downsample)``.
         '''
         stem = self._stem_schema()
         blocks: List[Tuple[str, int, int]] = []
@@ -802,8 +910,8 @@ class Darknet(BasicModel):
             pools = schema['maxpool']
             downsample_points += pools
             for index, (block_type, spec) in enumerate(schema['blocks']):
-                # 段头池化已完成本段的下采样,所以只有它后面的块(含段内第一个块之后的块)
-                # 才用 stride=2 卷积继续下采样。
+                # The leading poolings already performed the downsampling of this stage, so only
+                # the blocks after them continue downsampling with a stride=2 convolution.
                 stride = 2 if index >= pools else 1
                 blocks.append((f'{part}[{index}]', current, stride))
                 downsample_points += 1 if stride == 2 else 0
@@ -812,20 +920,23 @@ class Darknet(BasicModel):
         expect = int(math.log2(self.downsample))
         if downsample_points != expect:
             raise ValueError(
-                f'Darknet-{self.variant} 共有 {downsample_points} 处 2 倍下采样,'
-                f'合计 {2 ** downsample_points} 倍,与 downsample={self.downsample} 不符。'
+                f'Darknet-{self.variant} has {downsample_points} 2x downsampling steps for a '
+                f'total factor of {2 ** downsample_points}, which does not match '
+                f'downsample={self.downsample}'
             )
         return tuple(blocks)
 
     def resolve_part_inputs(self) -> Dict[str, int]:
         '''
-        推导 ``prelude / body / coda`` 三段的输入通道。
+        Derives the input channels of the three stages ``prelude / body / coda``.
 
-        段间衔接是显式的:prelude 接 stem 的输出,body 接 prelude 最后一个块的输出,
-        coda 接 body 最后一个块的输出;相邻两段之间没有卷积,只有池化,所以通道数不变。
+        The connections between stages are explicit: prelude takes the output of stem, body takes
+        the output of the last block of prelude and coda takes the output of the last block of
+        body; there is no convolution between adjacent stages, only pooling, so the channel count
+        does not change.
 
         Returns:
-            Dict[str, int]: ``{'prelude': c0, 'body': c1, 'coda': c2}``。
+            Dict[str, int]: ``{'prelude': c0, 'body': c1, 'coda': c2}``.
         '''
         stem = self._stem_schema()
         current = stem['channels'][-1]
@@ -839,17 +950,19 @@ class Darknet(BasicModel):
 
     def _count_convolutions(self, conv_specs: Sequence[Tuple[int, int]]) -> None:
         '''
-        校验卷积层总数与官方配置一致,并写入 ``conv_count``。
+        Validates that the total number of convolution layers matches the official configuration
+        and stores it in ``conv_count``.
 
-        Darknet 的名字直接来自权重层数:Darknet19 是 18 个卷积 + 1 个全连接分类层,
-        Darknet53 是 52 个卷积 + 1 个全连接分类层;本实现把分类层也写成 1x1 卷积,
-        所以 ``conv_count`` 分别等于 19 和 53。
+        The Darknet names come directly from the number of weight layers: Darknet19 is 18
+        convolutions + 1 fully connected classification layer and Darknet53 is 52 convolutions + 1
+        fully connected classification layer; this implementation writes the classification layer
+        as a 1x1 convolution too, so ``conv_count`` equals 19 and 53 respectively.
 
         Args:
-            conv_specs (Sequence[Tuple[int, int]]): ``resolve_conv_specs`` 的结果。
+            conv_specs (Sequence[Tuple[int, int]]): The result of ``resolve_conv_specs``.
 
         Raises:
-            ValueError: 当展开结果与 ``EXPECTED_CONVS`` 不符时。
+            ValueError: If the expansion does not match ``EXPECTED_CONVS``.
         '''
         self.conv_count = len(conv_specs)
         expected = EXPECTED_CONVS.get(self.variant)
@@ -857,24 +970,27 @@ class Darknet(BasicModel):
             expected += 1 if self.num_classes else 0
             if self.conv_count != expected:
                 raise ValueError(
-                    f'Darknet-{self.variant} 的配置展开出 {self.conv_count} 个卷积层,'
-                    f'与官方配置的 {expected} 个不符(numb_classes={self.num_classes}),'
-                    f'请检查 SPECS[{self.variant!r}]。'
+                    f'the configuration of Darknet-{self.variant} expands to '
+                    f'{self.conv_count} convolution layers, which does not match the {expected} '
+                    f'of the official configuration (numb_classes={self.num_classes}); check '
+                    f'SPECS[{self.variant!r}]'
                 )
 
     # ------------------------------------------------------------------
-    # 各段构建
+    # Stage construction
     # ------------------------------------------------------------------
 
     def _build_stem(self) -> int:
         '''
-        构建 ``stem``:首卷积序列。
+        Builds ``stem``: the leading convolution sequence.
 
-        两个变体的 stem 都是单个 stride=1 的 3x3 卷积(下采样交给 prelude 的池化或块首的
-        stride=2 卷积);规格表里保留完整的 ``channels / kernels / strides`` 写法,便于扩展变体。
+        The stem of both variants is a single 3x3 convolution with stride=1 (downsampling is left
+        to the pooling of prelude or the stride=2 convolution at the start of a block); the
+        specification table keeps the full ``channels / kernels / strides`` notation to make
+        adding variants easy.
 
         Returns:
-            int: stem 的输出通道数。
+            int: Number of output channels of the stem.
         '''
         schema = self._stem_schema()
         layers: List[nn.Module] = []
@@ -896,10 +1012,11 @@ class Darknet(BasicModel):
         stride: int = 1
     ) -> ConvBlock:
         '''
-        构建一个带归一化与激活的 Darknet 卷积(``pad = kernel // 2``)。
+        Builds a Darknet convolution with normalization and activation (``pad = kernel // 2``).
 
-        激活用 ``activation_module`` 而不是 ``activation`` 字符串:传入 ``LeakyReLU(0.1)`` 时
-        能原样复用该实例,避免 ``get_activation('leakyrelu')`` 退回 codon 的默认斜率 0.01。
+        The activation is taken from ``activation_module`` rather than the ``activation`` string:
+        a passed-in ``LeakyReLU(0.1)`` is reused as is instead of letting
+        ``get_activation('leakyrelu')`` fall back to the codon default slope of 0.01.
         '''
         return darknet_conv(
             in_channels=in_channels,
@@ -918,16 +1035,17 @@ class Darknet(BasicModel):
         stride: int = 2
     ) -> nn.Sequential:
         '''
-        构建一个块:块首卷积负责下采样,其后是若干同通道的卷积或瓶颈残差块。
+        Builds one block: the leading convolution downsamples and is followed by several
+        convolutions or bottleneck residual blocks with unchanged channels.
 
         Args:
-            in_channels (int): 块输入通道数。
-            block_type (str): ``CONV_BLOCK`` 或 ``RESIDUAL_BLOCK``。
-            spec (Sequence[Any]): 通道规格,语义见 ``_expand_spec``。
-            stride (int, optional): 块首卷积的步长。Defaults to 2.
+            in_channels (int): Number of input channels of the block.
+            block_type (str): ``CONV_BLOCK`` or ``RESIDUAL_BLOCK``.
+            spec (Sequence[Any]): Channel specification, see ``_expand_spec`` for its meaning.
+            stride (int, optional): Stride of the leading convolution. Defaults to 2.
 
         Returns:
-            nn.Sequential: 该块的层序列。
+            nn.Sequential: The layer sequence of this block.
         '''
         expanded = self._expand_spec(spec, block_type)
         layers: List[nn.Module] = []
@@ -935,8 +1053,9 @@ class Darknet(BasicModel):
         index = 0
         while index < len(expanded):
             if block_type == RESIDUAL_BLOCK and index:
-                # residual 块:从第 2 个元素起,每两个元素 (1x1 压缩, 3x3 扩展) 组成一个残差块。
-                # 残差块自带这两层,所以这里必须整体跳过两个元素,不能只跳一个。
+                # residual block: starting from the second element, every two elements (1x1
+                # squeeze, 3x3 expand) form one residual block. The residual block contains both
+                # layers itself, so two elements must be skipped as a whole, not just one.
                 inner = expanded[index][0]
                 outer = expanded[index + 1][0]
                 layers.append(ResidualBlock(
@@ -963,19 +1082,21 @@ class Darknet(BasicModel):
 
     def _build_part(self, part: str) -> nn.Sequential:
         '''
-        构建 ``prelude / body / coda`` 中的一段:段头池化 + 若干块。
+        Builds one of the stages ``prelude / body / coda``: leading poolings + several blocks.
 
-        块的输入通道与块首步长都取自 ``resolve_block_strides``,因此这一段既是「按官方 cfg 装配」,
-        也是「配置自洽性的运行期验证」:任何通道接不上的组合在构造阶段就会被排除。
+        Both the input channels of a block and the stride of its leading convolution come from
+        ``resolve_block_strides``, so this method is at once "assembling according to the official
+        cfg" and "a runtime validation of configuration consistency": any combination whose
+        channels do not line up is ruled out during construction.
 
         Args:
-            part (str): 'prelude'、'body' 或 'coda'。
+            part (str): 'prelude', 'body' or 'coda'.
 
         Returns:
-            nn.Sequential: 该段的层序列(池化 + 块)。
+            nn.Sequential: The layer sequence of this stage (poolings + blocks).
 
         Raises:
-            ValueError: 当段名不受支持时。
+            ValueError: If the stage name is not supported.
         '''
         schema = self._part_schema(part)
         strides = {name: stride for name, _, stride in self._block_strides}
@@ -993,22 +1114,28 @@ class Darknet(BasicModel):
         return nn.Sequential(*layers)
 
     # ------------------------------------------------------------------
-    # 前向
+    # Forward pass
     # ------------------------------------------------------------------
 
     def verify_shapes(self) -> Tuple[int, int, int]:
         '''
-        用一块假输入跑一遍前向,校验通道与空间尺寸真的能接上。
+        Runs one forward pass with a dummy input to check that the channels and the spatial sizes
+        really line up.
 
-        静态检查(spec 表的自洽性)只能覆盖「同核段内通道一致」这类结构性约束,真正决定特征图能否
-        接上的是每个卷积的 in/out 通道,而 in_channels 依赖上游 —— 所以这里直接做一次真实前向:
-        任何通道对不上都会在实例化 ``Darknet`` 时抛 ``RuntimeError``,而不是等到训练时才炸。
+        The static checks (the self-consistency of the spec tables) can only cover structural
+        constraints such as "the channels inside a single-kernel run agree"; what really decides
+        whether feature maps connect is the in/out channels of every convolution, and in_channels
+        depends on the upstream -- so a real forward pass is run here: any channel mismatch
+        raises a ``RuntimeError`` when ``Darknet`` is instantiated instead of blowing up during
+        training.
 
         Returns:
-            Tuple[int, int, int]: prelude / body / coda 输出特征图的通道数。
+            Tuple[int, int, int]: Number of output channels of the prelude / body / coda feature
+                maps.
 
         Raises:
-            RuntimeError: 前向过程中出现形状不匹配(通道数或空间尺寸接不上)。
+            RuntimeError: If a shape mismatch occurs during the forward pass (channels or spatial
+                sizes do not line up).
         '''
         was_training = self.training
         self.eval()
@@ -1016,10 +1143,11 @@ class Darknet(BasicModel):
             with torch.no_grad():
                 probe = torch.zeros(1, self.in_channels, self.size, self.size)
                 channels = tuple(feature.shape[1] for feature in self.stage_features(probe))
-        except RuntimeError as exc:  # pragma: no cover - 只在配置写错时触发
+        except RuntimeError as exc:  # pragma: no cover - only triggered by a miswritten config
             raise RuntimeError(
-                f'Darknet-{self.variant} 的通道/尺寸衔接校验失败(size={self.size}):'
-                f'{exc}。请检查 SPECS[{self.variant!r}] 里的通道规格。'
+                f'the channel/size validation of Darknet-{self.variant} failed '
+                f'(size={self.size}): {exc}; check the channel specifications in '
+                f'SPECS[{self.variant!r}]'
             ) from exc
         finally:
             self.train(was_training)
@@ -1027,16 +1155,18 @@ class Darknet(BasicModel):
 
     def stage_features(self, x: torch.Tensor) -> List[torch.Tensor]:
         '''
-        返回三个尺度的特征图,对应 ``prelude / body / coda`` 三段的输出。
+        Returns the feature maps of the three scales, i.e. the outputs of the ``prelude / body /
+        coda`` stages.
 
-        416 输入时,``variant='53'`` 得到 104x104(8 倍下采样)、26x26(16 倍)、13x13(32 倍),
-        正是 YOLOv3 的 FPN 尺度;``variant='19'`` 得到 208x208(2 倍)、52x52(8 倍)、13x13(32 倍)。
+        For a 416 input, ``variant='53'`` gives 104x104 (8x downsampling), 26x26 (16x) and 13x13
+        (32x), exactly the FPN scales of YOLOv3; ``variant='19'`` gives 208x208 (2x), 52x52 (8x)
+        and 13x13 (32x).
 
         Args:
-            x (torch.Tensor): 输入图像。形状 [Batch, in_channels, size, size]
+            x (torch.Tensor): Input image of shape [Batch, in_channels, size, size].
 
         Returns:
-            List[torch.Tensor]: 长度 3 的特征图列表,空间尺寸依次减半。
+            List[torch.Tensor]: A list of 3 feature maps whose spatial sizes are halved in turn.
         '''
         x = self.stem(x)
         features: List[torch.Tensor] = []
@@ -1052,59 +1182,74 @@ class Darknet(BasicModel):
         keep_size: bool = False
     ) -> torch.Tensor:
         '''
-        主干是「全卷积 + 全局平均池化 + 1x1 分类卷积」的结构,所以**任意 32 的倍数边长都能直接
-        前向**,不必等于构造时的 ``size``:``size`` 只用来推导并记录 ``grid_size``,卷积核的形状
-        与它无关。多尺度训练就是这样用的 —— 同一个模型实例在每个 batch 换一档边长,让 batch norm
-        的统计量覆盖各档分辨率,从而消除"训练 256、推理 416"的分布失配。
+        The backbone is "fully convolutional + global average pooling + 1x1 classification
+        convolution", so **any side length that is a multiple of 32 can be forwarded directly**
+        and need not equal the ``size`` used at construction time: ``size`` only derives and
+        records ``grid_size`` and has nothing to do with the kernel shapes. This is how
+        multi-scale training works -- one model instance switches side length every batch so that
+        the batch norm statistics cover all the resolutions, removing the "train at 256, infer at
+        416" distribution mismatch.
 
-        需要留意的两点:
+        Two things to keep in mind:
 
-        - 换尺寸会**改变 batch norm 的统计量**(训练模式下 running stats 会被新分辨率的分布拉走),
-          这正是多尺度训练想要的;但只想要某一档的话就别混着喂,或者事后按该档重估统计量。
-        - ``keep_size=True`` 时恢复旧行为(边长必须等于构造时的 ``size``),用于需要严格复现单尺寸
-          实验的场景。
+        - Changing the size **changes the batch norm statistics** (in training mode the running
+          stats are pulled towards the distribution of the new resolution), which is exactly what
+          multi-scale training wants; if only one size is wanted, do not mix them, or re-estimate
+          the statistics at that size afterwards.
+        - ``keep_size=True`` restores the old behaviour (the side length must equal the ``size``
+          used at construction time), for cases that need to reproduce a single-size experiment
+          strictly.
 
         Args:
-            x (torch.Tensor): 输入图像。形状 [Batch, in_channels, side, side],``side`` 必须是 32 的
-                倍数(224 / 256 / 320 / 416 / 448 等);``keep_size=True`` 时还必须等于构造时的 ``size``。
-            stage (Literal['coda', 'all'], optional): 取哪一层输出。'coda' 返回最高层特征图
-                (有分类头时是类别 logits);'all' 返回 ``stage_features`` 的三尺度特征图列表。
+            x (torch.Tensor): Input image of shape [Batch, in_channels, side, side], where
+                ``side`` must be a multiple of 32 (224 / 256 / 320 / 416 / 448 and so on); with
+                ``keep_size=True`` it must also equal the ``size`` used at construction time.
+            stage (Literal['coda', 'all'], optional): Which output to take. 'coda' returns the
+                highest-level feature map (the class logits when there is a classification head);
+                'all' returns the list of three feature maps from ``stage_features``.
                 Defaults to 'coda'.
-            keep_size (bool, optional): 是否强制输入边长与构造时的 ``size`` 一致。Defaults to False.
+            keep_size (bool, optional): Whether to force the input side length to match the
+                ``size`` used at construction time. Defaults to False.
 
         Returns:
-            torch.Tensor: ``stage='coda'`` 时,若 ``num_classes > 0`` 返回类别 logits
-                ``[Batch, num_classes]``,否则返回网格特征图 ``[Batch, C, side // 32, side // 32]``;
-                ``stage='all'`` 时返回长度 3 的特征图列表。
+            torch.Tensor: With ``stage='coda'``, the class logits ``[Batch, num_classes]`` when
+                ``num_classes > 0``, otherwise the grid feature map
+                ``[Batch, C, side // 32, side // 32]``; with ``stage='all'``, a list of 3 feature
+                maps.
 
         Raises:
-            ValueError: 当输入不是 4 维/不是正方形/不是 32 的倍数(或 ``keep_size=True`` 时边长与
-                ``size`` 不符),或 ``stage`` 取值非法时。
+            ValueError: If the input is not 4-dimensional, not square or not a multiple of 32 (or,
+                with ``keep_size=True``, its side length does not match ``size``), or if ``stage``
+                has an invalid value.
         '''
         if x.ndim != 4:
-            raise ValueError(f'Darknet 主干期望 4 维输入 [B, C, H, W],收到 {tuple(x.shape)}。')
+            raise ValueError(
+                f'the Darknet backbone expects a 4D input [B, C, H, W], got {tuple(x.shape)}'
+            )
 
         height, width = x.shape[-2:]
         if height != width:
             raise ValueError(
-                f'Darknet 主干是方形下采样结构,期望正方形输入,收到 {height}x{width}。'
+                f'the Darknet backbone is a square downsampling structure, so a square input is '
+                f'expected, got {height}x{width}'
             )
         if height % self.downsample != 0:
             raise ValueError(
-                f'输入边长 {height} 不是 {self.downsample} 的整数倍(主干有 '
-                f'{int(math.log2(self.downsample))} 次 2 倍下采样),'
-                f'最接近的合法边长是 {self.nearest_valid_size(height, self.downsample)}。'
+                f'the input side {height} is not a multiple of {self.downsample} (the backbone '
+                f'has {int(math.log2(self.downsample))} 2x downsampling steps); the closest '
+                f'valid side is {self.nearest_valid_size(height, self.downsample)}'
             )
         if keep_size and height != self.size:
             raise ValueError(
-                f'keep_size=True 时输入边长必须等于构造时的 size={self.size},收到 {height};'
-                f'该主干的输出网格固定为 {self.grid_size}x{self.grid_size}。'
+                f'with keep_size=True the input side must equal the size used at construction '
+                f'time, size={self.size}, got {height}; the output grid of this backbone is '
+                f'fixed at {self.grid_size}x{self.grid_size}'
             )
 
         if stage == 'all':
             return self.stage_features(x)
         if stage != 'coda':
-            raise ValueError(f"stage 只支持 'coda' 或 'all',收到 {stage!r}。")
+            raise ValueError(f"stage only supports 'coda' or 'all', got {stage!r}")
 
         x = self.coda(self.body(self.prelude(self.stem(x))))
         if self.classifier is None:
@@ -1120,32 +1265,38 @@ class Darknet(BasicModel):
         step: int = GLOBAL_DOWNSAMPLE
     ) -> Tuple[int, ...]:
         '''
-        列出 ``[min_size, max_size]`` 区间内所有合法的输入边长(``step`` 的倍数)。
+        Lists every valid input side length (a multiple of ``step``) inside
+        ``[min_size, max_size]``.
 
-        多尺度训练时用它一次性拿到候选档位,例如 ``(256, 320, 352, 416, 448)``。
+        Multi-scale training uses it to obtain all the candidate steps at once, for example
+        ``(256, 320, 352, 416, 448)``.
 
         Args:
-            min_size (int, optional): 区间下界(含),会被向上取到 ``step`` 的倍数。
-                Defaults to 256.
-            max_size (int, optional): 区间上界(含),会被向下取到 ``step`` 的倍数。
-                Defaults to 448.
-            step (int, optional): 步长,必须等于主干的下采样倍数。Defaults to 32.
+            min_size (int, optional): Lower bound of the interval (inclusive), rounded up to a
+                multiple of ``step``. Defaults to 256.
+            max_size (int, optional): Upper bound of the interval (inclusive), rounded down to a
+                multiple of ``step``. Defaults to 448.
+            step (int, optional): Step, which must equal the downsampling factor of the backbone.
+                Defaults to 32.
 
         Returns:
-            Tuple[int, ...]: 合法边长元组,升序;区间内没有合法值时抛异常。
+            Tuple[int, ...]: Tuple of valid side lengths in ascending order; an exception is
+                raised when the interval contains no valid value.
 
         Raises:
-            ValueError: 当 ``min_size``/``max_size`` 非法,或区间内没有 ``step`` 的倍数时。
+            ValueError: If ``min_size``/``max_size`` are invalid, or if the interval contains no
+                multiple of ``step``.
         '''
         if step <= 0 or min_size <= 0 or max_size < min_size:
             raise ValueError(
-                f'尺寸区间非法:min_size={min_size}, max_size={max_size}, step={step}。'
+                f'invalid size interval: min_size={min_size}, max_size={max_size}, step={step}'
             )
         low = math.ceil(min_size / step) * step
         high = math.floor(max_size / step) * step
         if low > high:
             raise ValueError(
-                f'[{min_size}, {max_size}] 内没有 {step} 的倍数,请放宽区间。'
+                f'there is no multiple of {step} inside [{min_size}, {max_size}], widen the '
+                f'interval'
             )
         return tuple(range(low, high + 1, step))
 
@@ -1160,34 +1311,41 @@ class Darknet(BasicModel):
         generator: Optional[torch.Generator] = None
     ) -> int:
         '''
-        为多尺度训练随机抽一个输入边长。
+        Draws a random input side length for multi-scale training.
 
-        默认在 ``[min_size, max_size]`` 的合法档位里**均匀**取值。给 ``focus`` 时可以偏向某些尺寸
-        (例如部署在 416,就传 ``focus=(416,)``) —— 此时有 ``focus_ratio`` 的概率从 ``focus`` 里取,
-        其余概率在区间内均匀取。这样既不丢掉多尺度带来的 batch norm 覆盖,又能保证目标尺寸的统计量
-        占足够权重(只偶尔喂一次 416 是没用的,统计量仍由 256 主导)。
+        By default the value is drawn **uniformly** from the valid steps inside
+        ``[min_size, max_size]``. Giving ``focus`` biases it towards certain sizes (for instance
+        ``focus=(416,)`` when deploying at 416) -- in that case the value comes from ``focus``
+        with probability ``focus_ratio`` and uniformly from the interval otherwise. This keeps the
+        batch norm coverage that multi-scale training provides while giving the statistics of the
+        target size enough weight (feeding 416 only occasionally is useless, the statistics are
+        still dominated by 256).
 
-        用法是在每个 batch(或每个 epoch)取一次,把图 resize/random-crop 到该边长再前向;
-        统计量随之更新,因为是模型自己前向时累积的,不需要额外操作。
+        The intended use is to draw once per batch (or per epoch), resize / random-crop the image
+        to that side length and forward; the statistics then update themselves because the model
+        accumulates them during its own forward passes, so no extra work is needed.
 
         Args:
-            min_size (int, optional): 区间下界(含)。Defaults to 256.
-            max_size (int, optional): 区间上界(含)。Defaults to 448.
-            focus (Optional[Sequence[int]], optional): 需要重点覆盖的尺寸列表,会先对齐到 ``step``
-                的倍数,非法项被忽略。Defaults to None.
-            focus_ratio (float, optional): 从 ``focus`` 里取值的概率,取值 0..1。Defaults to 0.5.
-            step (int, optional): 合法边长的步长。Defaults to 32.
-            generator (Optional[torch.Generator], optional): 随机数发生器,便于复现。Defaults to None.
+            min_size (int, optional): Lower bound of the interval (inclusive). Defaults to 256.
+            max_size (int, optional): Upper bound of the interval (inclusive). Defaults to 448.
+            focus (Optional[Sequence[int]], optional): Sizes to cover especially, aligned to a
+                multiple of ``step`` first, with invalid entries ignored. Defaults to None.
+            focus_ratio (float, optional): Probability of drawing from ``focus``, in 0..1.
+                Defaults to 0.5.
+            step (int, optional): Step of the valid side lengths. Defaults to 32.
+            generator (Optional[torch.Generator], optional): Random number generator, useful for
+                reproducibility. Defaults to None.
 
         Returns:
-            int: 本次训练使用的输入边长。
+            int: The input side length to use for this training step.
 
         Raises:
-            ValueError: 当区间非法、``focus_ratio`` 越界,或 ``focus`` 里没有任何合法尺寸时。
+            ValueError: If the interval is invalid, if ``focus_ratio`` is out of range, or if
+                ``focus`` contains no valid size at all.
         '''
         candidates = cls.valid_sizes(min_size, max_size, step)
         if not 0.0 <= focus_ratio <= 1.0:
-            raise ValueError(f'focus_ratio 必须落在 [0, 1],收到 {focus_ratio}。')
+            raise ValueError(f'focus_ratio must lie in [0, 1], got {focus_ratio}')
 
         focused: Tuple[int, ...] = ()
         if focus:
@@ -1197,12 +1355,14 @@ class Darknet(BasicModel):
             }))
             if not focused:
                 raise ValueError(
-                    f'focus={tuple(focus)} 里没有落在 [{min_size}, {max_size}] 且为 {step} 的倍数的尺寸。'
+                    f'focus={tuple(focus)} contains no size that lies in [{min_size}, {max_size}] '
+                    f'and is a multiple of {step}'
                 )
 
         if focused and focus_ratio > 0:
-            # 只用一次均匀抽样同时决定「走 focus 还是走区间」和「取哪个元素」,
-            # 这样比例精确等于 focus_ratio,也不依赖随机流的初始状态。
+            # A single uniform draw decides both "focus or interval" and "which element", so the
+            # proportion is exactly focus_ratio and does not depend on the initial state of the
+            # random stream.
             draw = torch.rand((), generator=generator).item()
             if draw < focus_ratio:
                 index = int(draw / focus_ratio * len(focused))
@@ -1219,18 +1379,22 @@ class Darknet(BasicModel):
         downsample: int = GLOBAL_DOWNSAMPLE
     ) -> Tuple[torch.Tensor, Tuple[int, int, int, int]]:
         '''
-        把输入补零到 ``downsample`` 的整数倍(只在右下方向补)。
+        Pads the input with zeros up to a multiple of ``downsample`` (only on the right and
+        bottom).
 
-        数据尺寸不规则时(例如任意分辨率的图片),先把边长补到 32 的倍数再送进主干,可以避免
-        尺寸校验报错。补零不改变 batch norm 的统计量,只是把多出来的区域变成常数。
+        With irregular data sizes (images of arbitrary resolution, for example) padding the side
+        lengths to a multiple of 32 before feeding the backbone avoids the size validation error.
+        Zero padding does not change the batch norm statistics, it only turns the extra region
+        into a constant.
 
         Args:
-            x (torch.Tensor): 输入张量。形状 [B, C, H, W]
-            downsample (int, optional): 目标下采样倍数。Defaults to 32.
+            x (torch.Tensor): Input tensor of shape [B, C, H, W].
+            downsample (int, optional): Target downsampling factor. Defaults to 32.
 
         Returns:
-            Tuple[torch.Tensor, Tuple[int, int, int, int]]: 补齐后的张量与
-                ``(left, right, top, bottom)`` 填充量,便于把预测坐标映射回原图。
+            Tuple[torch.Tensor, Tuple[int, int, int, int]]: The padded tensor and the
+                ``(left, right, top, bottom)`` padding, which makes it easy to map predicted
+                coordinates back onto the original image.
         '''
         height, width = x.shape[-2:]
         target_h = math.ceil(height / downsample) * downsample
@@ -1250,18 +1414,20 @@ class Darknet(BasicModel):
         activation: Union[str, BasicModel] = act
     ) -> 'Darknet':
         '''
-        按输入/输出形状自动构建。
+        Builds the model automatically from the input/output shapes.
 
         Args:
-            input_shape (Tuple[int, ...]): 输入形状(不含 batch),例如 (3, 416, 416)。
-            output_shape (Optional[Tuple[int, ...]], optional): 输出形状。给定时取最后一维作为
-                类别数并保留分类头;为 None 时去掉分类头(检测主干)。Defaults to None.
-            variant (str, optional): '19' 或 '53'。Defaults to '19'.
-            norm (str, optional): 归一化类型。Defaults to 'batch'.
-            activation (Union[str, BasicModel], optional): 激活函数。Defaults to act。
+            input_shape (Tuple[int, ...]): Input shape without the batch dimension, e.g.
+                (3, 416, 416).
+            output_shape (Optional[Tuple[int, ...]], optional): Output shape. When given, its last
+                dimension becomes the number of classes and the classification head is kept; when
+                None the classification head is removed (detection backbone). Defaults to None.
+            variant (str, optional): '19' or '53'. Defaults to '19'.
+            norm (str, optional): Normalization type. Defaults to 'batch'.
+            activation (Union[str, BasicModel], optional): Activation function. Defaults to act.
 
         Returns:
-            Darknet: 构建好的主干。
+            Darknet: The constructed backbone.
         '''
         return Darknet(
             variant=variant,
@@ -1274,23 +1440,24 @@ class Darknet(BasicModel):
 
 
 if __name__ == '__main__':
-    '''自检:打印两个变体的输出形状、三尺度特征、卷积层数与参数量。'''
+    '''Self-check: prints the output shape, the three-scale features, the convolution count and
+    the parameter count of both variants.'''
     for variant, expect in (('19', 19), ('53', 53)):
         model = Darknet(variant=variant, size=416)
         with torch.no_grad():
             logits = model(torch.randn(1, 3, 416, 416))
             features = model(torch.randn(1, 3, 416, 416), stage='all')
         print(f'Darknet-{variant} 416 -> {tuple(logits.shape)}')
-        print('  三尺度特征:', [tuple(f.shape) for f in features])
-        print('  卷积层数  :', model.conv_count, '| expect', expect,
-              '| 残差块', model.residual_count)
-        print('  通道表    :', model.block_channels, '/', model.stage_channels)
-        print('  参数量    :', model.count_params(human_readable=True))
+        print('  three-scale features:', [tuple(f.shape) for f in features])
+        print('  conv layers :', model.conv_count, '| expect', expect,
+              '| residual blocks', model.residual_count)
+        print('  channel table:', model.block_channels, '/', model.stage_channels)
+        print('  parameters  :', model.count_params(human_readable=True))
 
     backbone = Darknet(variant='53', num_classes=0, size=416)
     with torch.no_grad():
         feat = backbone(torch.randn(1, 3, 416, 416))
-    print('检测主干 Darknet-53 ->', tuple(feat.shape),
+    print('detection backbone Darknet-53 ->', tuple(feat.shape),
           '| params', backbone.count_params(human_readable=True))
 
     for size in (224, 256, 416, 608):
