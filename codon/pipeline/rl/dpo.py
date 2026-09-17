@@ -15,7 +15,7 @@ from codon.pipeline.base import BasicPipeline, register_pipeline, Callback
 from codon.pipeline.rl.utils import token_logprobs, sequence_logprob
 from codon.utils.tokens import PackedTokenizer
 from codon.model.types.language import CausalLanguageModel
-from codon.utils.session import Session, Message
+from codon.utils.session import Session, Message, resolve_token_id
 
 import copy
 import random
@@ -190,11 +190,15 @@ class DPOPipeline(BasicPipeline):
             weight_decay=cfg.weight_decay,
         )
 
-        # --- Special tokens ---
-        self.pad_id = self.tokenizer.token_to_id(cfg.pad_token_str)
+        # --- Special tokens（按逻辑名解析，兼容 A1 [im_end] 与 A2 <|im_end|> 词表）---
+        self.pad_id = resolve_token_id(self.tokenizer, cfg.pad_token_str)
         if self.pad_id is None:
             self.pad_id = 0
-        self.eos_id = self.tokenizer.token_to_id(cfg.eos_token_str)
+        self.eos_id = resolve_token_id(self.tokenizer, cfg.eos_token_str)
+        if self.eos_id is None:
+            raise ValueError(
+                f'eos token {cfg.eos_token_str!r} not found in the tokenizer vocabulary'
+            )
 
     def teardown(self) -> None:
         pass

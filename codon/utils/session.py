@@ -19,11 +19,96 @@ _ANGLE_TOKEN_NAMES = {
     'cot_start': '<|thought_start|>', 'cot_end': '<|thought_end|>',
     # 思考强度，紧跟在 cot_start 之后
     'effort_low': '<|effort_low|>', 'effort_high': '<|effort_high|>', 'effort_max': '<|effort_max|>',
+    # 工具调用（codon.j2: <|tool_call_start|>name<|tool_name_divider|>{...}<|tool_call_end|>）
+    'tool_call_start': '<|tool_call_start|>', 'tool_call_end': '<|tool_call_end|>',
+    'tool_name_divider': '<|tool_name_divider|>',
     'fim_pre': '<|fim_prefix|>', 'fim_mid': '<|fim_middle|>', 'fim_suf': '<|fim_suffix|>',
     'pad': '<|pad|>',
     'image_start': '<|modality_image_start|>', 'image_end': '<|modality_image_end|>',
     'image_patch': '<|modality_image_pad|>',
+    'audio_start': '<|modality_audio_start|>', 'audio_end': '<|modality_audio_end|>',
+    'audio_patch': '<|modality_audio_pad|>',
+    'video_start': '<|modality_video_start|>', 'video_end': '<|modality_video_end|>',
+    'video_patch': '<|modality_video_pad|>',
+    # codon/res LM['spec_token'] 里的其余保留 token（词表里有就解析，没有则为 None）
+    'safe_escape': '<|safe_escape|>', 'unk': '<|unk|>', 'sep': '<|sep|>',
 }
+
+#: 逻辑名别名：新词表的叫法（thought_end / tool_response…）也能直接查。
+_TOKEN_ALIASES = {
+    'thought_start': 'cot_start', 'thought_end': 'cot_end',
+    'tool_response': 'tool', 'tool_call': 'tool_call_start',
+    'modality_image_start': 'image_start', 'modality_image_end': 'image_end',
+    'modality_image_pad': 'image_patch',
+}
+
+#: A1 词表风格（方括号 token 名）。
+_A1_TOKEN_NAMES = {
+    'im_start': '[im_start]', 'im_end': '[im_end]',
+    'system': '[system]', 'user': '[user]',
+    'model': '[model]', 'tool': '[tool]',
+    'fim': '[fim]',
+    'cot_start': '[cot_start]', 'cot_end': '[cot_end]',
+    # 思考强度，紧跟在 cot_start 之后
+    'effort_low': '[effort_low]', 'effort_high': '[effort_high]', 'effort_max': '[effort_max]',
+    # 工具调用（A1 词表里可能没有，那就解析成 None）
+    'tool_call_start': '[tool_call_start]', 'tool_call_end': '[tool_call_end]',
+    'tool_name_divider': '[tool_name_divider]',
+    'fim_pre': '[fim_pre]', 'fim_mid': '[fim_mid]', 'fim_suf': '[fim_suf]',
+    'pad': '[pad]',
+    'image_start': '[image_start]', 'image_end': '[image_end]',
+    'image_patch': '[unused_43]',
+    'audio_start': '[audio_start]', 'audio_end': '[audio_end]',
+    'video_start': '[video_start]', 'video_end': '[video_end]',
+}
+
+
+def _match_token_key(table: dict, name: str) -> Optional[str]:
+    '''把各种写法归一到逻辑名：'im_end' / '[im_end]' / '<|im_end|>' / 'thought_end'。'''
+    if not isinstance(name, str):
+        return None
+    if name in table:
+        return name
+    if name in _TOKEN_ALIASES:
+        return _TOKEN_ALIASES[name]
+    stripped = name.strip().strip('[]<>|').strip()
+    if stripped in table:
+        return stripped
+    if stripped in _TOKEN_ALIASES:
+        return _TOKEN_ALIASES[stripped]
+    for key, text in table.items():
+        if text == name:
+            return key
+    return None
+
+
+def token_name_table(tokenizer: PackedTokenizer) -> dict:
+    '''按词表风格返回「逻辑名 -> token 文本」表（A2 / chord 词表是 <|...|> 风格）。'''
+    if tokenizer.token_to_id(_ANGLE_TOKEN_NAMES['im_start']) is not None:
+        return dict(_ANGLE_TOKEN_NAMES)
+    return dict(_A1_TOKEN_NAMES)
+
+
+def resolve_token_name(tokenizer: PackedTokenizer, name: str) -> Optional[str]:
+    '''逻辑名 / A1 写法 / A2 写法 -> 实际 token 文本（词表里没有则 None）。'''
+    table = token_name_table(tokenizer)
+    key = _match_token_key(table, name)
+    if key is not None:
+        return table[key]
+    return name if tokenizer.token_to_id(name) is not None else None
+
+
+def resolve_token_id(tokenizer: PackedTokenizer, name: str) -> Optional[int]:
+    '''
+    逻辑名 / A1 写法 / A2 写法 -> token id（词表里没有则 None），不需要构造 Session。
+
+        resolve_token_id(tokenizer, '[im_end]')      # A1 词表
+        resolve_token_id(tokenizer, '<|im_end|>')    # A2 / chord 词表
+        resolve_token_id(tokenizer, 'im_end')        # 两种词表都可用
+    '''
+    resolved = resolve_token_name(tokenizer, name)
+    return tokenizer.token_to_id(resolved) if resolved else None
+
 
 @dataclass
 class Message:
@@ -118,19 +203,7 @@ class Session:
         self.patch_size = patch_size
         self.messages: list[Message] = []
 
-        self._tokens = {
-            'im_start': '[im_start]', 'im_end': '[im_end]',
-            'system': '[system]', 'user': '[user]',
-            'model': '[model]', 'tool': '[tool]',
-            'fim': '[fim]',
-            'cot_start': '[cot_start]', 'cot_end': '[cot_end]',
-            # 思考强度，紧跟在 cot_start 之后
-            'effort_low': '[effort_low]', 'effort_high': '[effort_high]', 'effort_max': '[effort_max]',
-            'fim_pre': '[fim_pre]', 'fim_mid': '[fim_mid]', 'fim_suf': '[fim_suf]',
-            'pad': '[pad]',
-            'image_start': '[image_start]', 'image_end': '[image_end]',
-            'image_patch': '[unused_43]',
-        }
+        self._tokens = dict(_A1_TOKEN_NAMES)
         self._ids: dict[str, Optional[int]] = {}
         self._maybe_use_angle_tokens()
         self._resolve_specials()
@@ -159,6 +232,42 @@ class Session:
 
     def _resolve_specials(self) -> None:
         self._ids = {k: self.tokenizer.token_to_id(v) for k, v in self._tokens.items()}
+
+    # ---- 特殊 token 查询（屏蔽两种词表风格的差异）----
+    @property
+    def tokens(self) -> dict:
+        '''逻辑名 -> 当前词表风格下的 token 文本。'''
+        return dict(self._tokens)
+
+    def _token_key(self, name: str) -> Optional[str]:
+        '''把各种写法归一到逻辑名（见 `_match_token_key`）。'''
+        return _match_token_key(self._tokens, name)
+
+    def token_name(self, name: str) -> Optional[str]:
+        '''逻辑名 / A1 写法 / A2 写法 -> 当前词表风格下的 token 文本（没有则 None）。'''
+        key = self._token_key(name)
+        return self._tokens.get(key) if key is not None else None
+
+    def token_id(self, name: str) -> Optional[int]:
+        '''
+        逻辑名 / A1 写法 / A2 写法 -> token id（词表里没有则 None）。
+
+        A1 词表（`[im_end]`）与 A2 / chord 词表（`<|im_end|>`）可以混着传，
+        内部按当前词表的实际风格解析，例如：
+
+            session.token_id('im_end')          # 两种风格都可用
+            session.token_id('[im_end]')        # A1 写法
+            session.token_id('<|im_end|>')      # A2 写法
+            session.token_id('thought_end')     # 别名 -> cot_end
+        '''
+        key = self._token_key(name)
+        if key is not None:
+            return self._ids.get(key)
+        return self.tokenizer.token_to_id(name)     # 词表里恰好就有这个 token 名
+
+    def special_ids(self) -> set:
+        '''当前词表风格下已解析出的特殊 token id 集合（用于过滤生成文本里的结构 token）。'''
+        return {token_id for token_id in self._ids.values() if token_id is not None}
 
     def set_token(self, mapping: dict) -> 'Session':
         self._tokens.update(mapping)

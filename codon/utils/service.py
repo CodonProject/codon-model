@@ -12,6 +12,7 @@ from pydantic import BaseModel
 import uvicorn
 
 from codon.model.types.language import CausalLanguageModel
+from codon.model.grammar import parse_response_format
 from codon.utils.tokens import PackedTokenizer
 
 
@@ -61,6 +62,10 @@ class ChatCompletionRequest(BaseModel):
         repetition_penalty (float): Repetition penalty parameter. Defaults to 1.15.
         max_tokens (int): The maximum number of tokens to generate. Defaults to 100.
         stream (bool): Whether to stream back partial progress. Defaults to False.
+        response_format (Optional[Dict[str, Any]]): 强制 JSON 输出（OpenAI 兼容）：
+            {'type': 'json_object'} / {'type': 'json'} / {'type': 'json_array'} /
+            {'type': 'json_schema', 'json_schema': {'name': str, 'schema': {...}, 'strict': bool}} /
+            {'type': 'text'}。默认 None，即自由文本。
     '''
     model: str
     messages: List[ChatMessage]
@@ -70,6 +75,7 @@ class ChatCompletionRequest(BaseModel):
     repetition_penalty: float = 1.15
     max_tokens: int = 1024
     stream: bool = False
+    response_format: Optional[Dict[str, Any]] = None
 
     model_config = {
         'extra': 'allow'
@@ -206,7 +212,8 @@ class Service:
         temperature: float,
         top_k: Optional[int],
         top_p: Optional[float],
-        created_time: int
+        created_time: int,
+        response_format: Optional[Dict[str, Any]] = None
     ) -> AsyncGenerator[str, None]:
         '''
         Asynchronous generator that yields OpenAI-compatible SSE events for chat completion streaming.
@@ -224,17 +231,23 @@ class Service:
                     max_new_tokens=max_tokens,
                     temperature=temperature,
                     top_k=top_k,
-                    top_p=top_p
+                    top_p=top_p,
+                    response_format=response_format
                 ):
                     yield chunk
 
             loop = asyncio.get_running_loop()
             iterator = _blocking_generator()
 
+            finish_reason = 'stop'
             while True:
                 chunk = await loop.run_in_executor(None, self._safe_next, iterator)
                 if chunk is None:
                     break
+
+                if chunk.finish_reason is not None:
+                    finish_reason = chunk.finish_reason   # 最后一块只报结束原因
+                    continue
 
                 content = '' if chunk.is_cot else chunk.content
                 reasoning_content = chunk.content if chunk.is_cot else ''
@@ -242,7 +255,7 @@ class Service:
                 if content or reasoning_content:
                     yield f'data: {json.dumps(self._make_chunk(request_id, model_id, content, reasoning_content, created_time, None))}\n\n'
 
-            yield f"data: {json.dumps(self._make_chunk(request_id, model_id, '', '', created_time, 'stop'))}\n\n"
+            yield f"data: {json.dumps(self._make_chunk(request_id, model_id, '', '', created_time, finish_reason))}\n\n"
             yield 'data: [DONE]\n\n'
 
     async def chat_completions(self, request: ChatCompletionRequest) -> Any:
@@ -273,6 +286,22 @@ class Service:
         model = card.model
         tokenizer = card.tokenizer
 
+        # Validate response_format early so bad schemas come back as 400 instead of 500
+        try:
+            parse_response_format(request.response_format)
+        except (TypeError, ValueError) as exc:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'error': {
+                        'message': f'Invalid response_format: {exc}',
+                        'type': 'invalid_request_error',
+                        'param': 'response_format',
+                        'code': 'invalid_response_format'
+                    }
+                }
+            )
+
         # Construct messages dictionary
         formatted_messages = []
         for msg in request.messages:
@@ -293,18 +322,20 @@ class Service:
                     temperature=request.temperature,
                     top_k=request.top_k,
                     top_p=request.top_p,
-                    created_time=created_time
+                    created_time=created_time,
+                    response_format=request.response_format
                 ),
                 media_type='text/event-stream'
             )
 
         # Non-streaming implementation optimized for singlelock using chat helper
         async with self.locks[model_id]:
-            def _blocking_generate() -> Tuple[str, str, int]:
+            def _blocking_generate() -> Tuple[str, str, int, str]:
                 from codon.utils.generate import chat
                 content_accum = []
                 reasoning_accum = []
                 total_tokens = 0
+                finish_reason = 'stop'
                 for chunk in chat(
                     model=model,
                     tokenizer=tokenizer,
@@ -313,18 +344,22 @@ class Service:
                     max_new_tokens=request.max_tokens,
                     temperature=request.temperature,
                     top_k=request.top_k,
-                    top_p=request.top_p
+                    top_p=request.top_p,
+                    response_format=request.response_format
                 ):
+                    if chunk.finish_reason is not None:
+                        finish_reason = chunk.finish_reason
+                        continue
                     if chunk.content:
                         if chunk.is_cot:
                             reasoning_accum.append(chunk.content)
                         else:
                             content_accum.append(chunk.content)
                     total_tokens += 1
-                return ''.join(content_accum), ''.join(reasoning_accum), total_tokens
+                return ''.join(content_accum), ''.join(reasoning_accum), total_tokens, finish_reason
 
             loop = asyncio.get_running_loop()
-            content, reasoning, total_generated = await loop.run_in_executor(None, _blocking_generate)
+            content, reasoning, total_generated, finish_reason = await loop.run_in_executor(None, _blocking_generate)
 
         message_payload = {
             'role': 'assistant',
@@ -344,7 +379,7 @@ class Service:
                         'index': 0,
                         'message': message_payload,
                         'logprobs': None,
-                        'finish_reason': 'stop'
+                        'finish_reason': finish_reason
                     }
                 ],
                 'usage': {

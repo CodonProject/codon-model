@@ -4,6 +4,9 @@ from codon.model.sampler import Sampler
 
 import inspect
 
+if TYPE_CHECKING:
+    from codon.model.grammar import JSONConstraint
+
 
 #: 音频能力允许声明的子类型（canonical 值）：
 #:   'speech'  -> 说话声（人声 / 语音）
@@ -301,7 +304,8 @@ class CausalLanguageModel(BasicModel):
         sampler: Optional[Sampler] = None,
         temperature: float = 0.7,
         eos_token_id: Optional[int] = None,
-        past_key_values: Optional[ModelCache] = None
+        past_key_values: Optional[ModelCache] = None,
+        constraint: Optional['JSONConstraint'] = None
     ) -> torch.Tensor:
         '''
         Generate text tokens autoregressively using a prefill-decode pipeline.
@@ -313,6 +317,13 @@ class CausalLanguageModel(BasicModel):
             temperature (float): Sampling temperature for the default Sampler. Only used if `sampler` is None.
             eos_token_id (int, optional): End-of-sequence token ID.
             past_key_values (ModelCache, optional): Cache container to reuse states across decode steps.
+            constraint (JSONConstraint, optional): 语法约束（强制 JSON）。传入后本方法会返回一个
+                绑定了该约束的采样器副本，JSON 完整时自动以 `eos_token_id` 收尾。构建方式见
+                `codon.model.grammar.build_json_constraint`，例如：
+
+                    from codon.model.grammar import build_json_constraint
+                    c = build_json_constraint(tokenizer, mode='object', eos_token_id=eos_id)
+                    model.generate(ids, constraint=c, eos_token_id=eos_id)
 
         Returns:
             torch.Tensor: Generated token IDs with shape [batch, seq_len + num_generated].
@@ -320,6 +331,10 @@ class CausalLanguageModel(BasicModel):
         self.eval()
         if sampler is None:
             sampler = Sampler(temperature=temperature)
+        if constraint is not None:
+            sampler = sampler.with_constraint(constraint, eos_token_id=eos_token_id)
+            if eos_token_id is None:
+                eos_token_id = constraint.eos_token_id   # 约束知道该用哪个 token 收尾
 
         generated = input_ids.clone()
         
