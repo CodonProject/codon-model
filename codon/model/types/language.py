@@ -5,6 +5,59 @@ from codon.model.sampler import Sampler
 import inspect
 
 
+#: 音频能力允许声明的子类型（canonical 值）：
+#:   'speech'  -> 说话声（人声 / 语音）
+#:   'music'   -> 音乐
+#:   'general' -> 通用（不区分内容，覆盖上面两类）
+AUDIO_SUBTYPES: Tuple[str, ...] = ('speech', 'music', 'general')
+
+#: 子类型别名 -> canonical 值；便于配置里直接写中文（说话声 / 音乐 / 通用）。
+_AUDIO_SUBTYPE_ALIASES: Dict[str, str] = {
+    'speech': 'speech', 'voice': 'speech', '说话声': 'speech', '语音': 'speech',
+    'music': 'music', '音乐': 'music',
+    'general': 'general', 'generic': 'general', '通用': 'general',
+}
+
+
+def normalize_audio_subtypes(subtypes: Union[str, Iterable[str], None]) -> Tuple[str, ...]:
+    '''把声明的音频子类型规整成去重、按 `AUDIO_SUBTYPES` 顺序排列的 tuple。
+
+    接受单个字符串（`'speech'`）或任意字符串可迭代（`['音乐', 'speech']`），
+    `None` / 空集返回 `()`。声明中含 'general'（通用）时收敛为 `('general',)`，
+    因为它已经覆盖其余子类型。未知子类型抛 ValueError。
+    '''
+    if subtypes is None:
+        return ()
+    if isinstance(subtypes, str):
+        subtypes = (subtypes,)
+    if not isinstance(subtypes, Iterable):
+        raise TypeError(
+            f'audio_subtypes must be a str or an iterable of str, '
+            f'got {type(subtypes).__name__}'
+        )
+
+    resolved: List[str] = []
+    for subtype in subtypes:
+        if not isinstance(subtype, str):
+            raise TypeError(
+                f'audio subtype must be a str, got {type(subtype).__name__}'
+            )
+        key = subtype.strip().lower()
+        if key not in _AUDIO_SUBTYPE_ALIASES:
+            raise ValueError(
+                f'unknown audio subtype {subtype!r}; '
+                f'expected one of {AUDIO_SUBTYPES} (aliases: speech/说话声/语音, '
+                f'music/音乐, general/通用)'
+            )
+        canonical = _AUDIO_SUBTYPE_ALIASES[key]
+        if canonical not in resolved:
+            resolved.append(canonical)
+
+    if 'general' in resolved:
+        return ('general',)
+    return tuple(name for name in AUDIO_SUBTYPES if name in resolved)
+
+
 @dataclass
 class CausalLanguageModelOutput:
     '''
@@ -29,25 +82,64 @@ class ModelMeta:
     '''
     模型能力元信息（capability flags），用于对外声明这个 CausalLanguageModel 支持什么。
 
-    默认全部 False：一个未声明的子类会被当成「纯文本、无思考、无工具」的基础模型，
+    默认全部 False：一个未声明的子类会被当成「纯文本、无思考、无工具、无音频」的基础模型，
     下游（服务层、chat 管线、评测）可以据此决定是否启用对应能力，而不是靠猜。
 
     Attributes:
         supports_image (bool): 是否支持图片输入（多模态）。
         supports_thinking (bool): 是否支持思考（CoT / reasoning 段落）。
         supports_tool (bool): 是否支持工具调用（function calling）。
+        supports_audio (bool): 是否支持音频（多模态）。
+        audio_subtypes (Tuple[str, ...]): 音频子类型，可选值见 `AUDIO_SUBTYPES`：
+            'speech'（说话声）/ 'music'（音乐）/ 'general'（通用）。不开启音频时为 ()；
+            开启音频但未指定子类型时按 ('general',) 处理；'general' 覆盖其余子类型。
     '''
     supports_image: bool = False
     supports_thinking: bool = False
     supports_tool: bool = False
+    supports_audio: bool = False
+    audio_subtypes: Tuple[str, ...] = ()
 
-    def to_dict(self) -> Dict[str, bool]:
+    def __post_init__(self) -> None:
+        self.audio_subtypes = normalize_audio_subtypes(self.audio_subtypes)
+        if not self.supports_audio:
+            # 「不支持音频」优先：未开启 supports_audio 时子类型一律清空，
+            # 既不会出现自相矛盾的 meta，也让子类用 supports_audio = False 就能单独关掉音频。
+            self.audio_subtypes = ()
+        elif not self.audio_subtypes:
+            # 只声明 supports_audio = True 时按「通用」处理。
+            self.audio_subtypes = ('general',)
+
+    def to_dict(self) -> Dict[str, Any]:
         '''展开为普通 dict，便于写入 API 响应。'''
         return {
             'supports_image': self.supports_image,
             'supports_thinking': self.supports_thinking,
             'supports_tool': self.supports_tool,
+            'supports_audio': self.supports_audio,
+            'audio_subtypes': list(self.audio_subtypes),
         }
+
+    def supports_audio_subtype(self, subtype: str) -> bool:
+        '''是否支持给定音频子类型：'speech' / 'music' / 'general'（也接受中文别名）。
+
+        声明了 'general'（通用）即视为覆盖 'speech' / 'music'。
+        '''
+        if not self.supports_audio:
+            return False
+        resolved = normalize_audio_subtypes(subtype)
+        if not resolved:
+            return False
+        return 'general' in self.audio_subtypes or resolved[0] in self.audio_subtypes
+
+
+#: ModelMeta 里所有布尔能力开关：子类可用同名类属性声明（如 `supports_audio = True`）。
+#: 由默认值类型推导，新增 bool 能力时无需再改 `_sync_meta`。
+_BOOL_FIELDS: Tuple[str, ...] = tuple(
+    name
+    for name, field_info in ModelMeta.__dataclass_fields__.items()
+    if isinstance(field_info.default, bool)
+)
 
 
 class CausalLanguageModel(BasicModel):
@@ -61,7 +153,24 @@ class CausalLanguageModel(BasicModel):
         class MotifA1(CausalLanguageModel):
             supports_thinking = True          # 也可以整体覆写 meta = ModelMeta(...)
 
-    也可在实例上读取：`model.meta` / `model.supports_thinking` / `model.supports('image')`。
+        class WhistleA1(CausalLanguageModel):
+            supports_audio = True             # 音频能力（多模态）
+            audio_subtypes = ('speech',)      # 可选子类型：说话声 / 音乐 / 通用
+
+    也可在实例上读取：`model.meta` / `model.supports_thinking` / `model.supports('image')` /
+    `model.supports_audio` / `model.audio_subtypes` / `model.supports_audio_subtype('music')`。
+
+    ## 音频子类型（audio_subtypes）
+
+    `audio_subtypes` 只在 `supports_audio = True` 时有意义，可写单个字符串或字符串集合，
+    取值（含中文别名）为 'speech' / 说话声、'music' / 音乐、'general' / 通用：
+
+        supports_audio = True                       # -> ('general',) 默认通用
+        supports_audio = True; audio_subtypes = 'music'        # -> ('music',)
+        supports_audio = True; audio_subtypes = ('speech', 'music')   # -> ('speech', 'music')
+        supports_audio = False                      # -> ()，子类型被清空（关掉音频即忽略子类型）
+
+    未声明 `supports_audio` 的子类 audio_subtypes 恒为 ()，'general' 覆盖其余子类型。
 
     ## forward 契约（子类必须遵守）
 
@@ -86,7 +195,7 @@ class CausalLanguageModel(BasicModel):
 
     @classmethod
     def _sync_meta(cls) -> None:
-        '''把子类声明的 `supports_*` 标记合并进 `meta`。
+        '''把子类声明的能力标记（`supports_*` / `audio_subtypes`）合并进 `meta`。
 
         未覆写任何标记时直接复用父类实例（无额外开销）；一旦覆写就新建 ModelMeta，
         避免修改父类共享的可变对象。
@@ -97,27 +206,31 @@ class CausalLanguageModel(BasicModel):
                 f'{cls.__name__}.meta must be a ModelMeta, got {type(declared).__name__}'
             )
 
-        flags = ('supports_image', 'supports_thinking', 'supports_tool')
         overridden = {
-            flag: cls.__dict__[flag]
-            for flag in flags
-            if flag in cls.__dict__
+            name: cls.__dict__[name]
+            for name in ModelMeta.__dataclass_fields__
+            if name in cls.__dict__
         }
-        for flag, value in overridden.items():
-            if not isinstance(value, bool):
+        for name in _BOOL_FIELDS:
+            if name in overridden and not isinstance(overridden[name], bool):
                 raise TypeError(
-                    f'{cls.__name__}.{flag} must be a bool, got {type(value).__name__}'
+                    f'{cls.__name__}.{name} must be a bool, got {type(overridden[name]).__name__}'
                 )
 
         if overridden:
             base = declared if declared is not None else ModelMeta()
-            cls.meta = ModelMeta(
-                supports_image=overridden.get('supports_image', base.supports_image),
-                supports_thinking=overridden.get('supports_thinking', base.supports_thinking),
-                supports_tool=overridden.get('supports_tool', base.supports_tool),
-            )
+            values = {name: getattr(base, name) for name in ModelMeta.__dataclass_fields__}
+            values.update(overridden)
+            try:
+                cls.meta = ModelMeta(**values)
+            except (TypeError, ValueError) as exc:
+                raise type(exc)(f'{cls.__name__}: {exc}') from exc
         elif declared is None:
             cls.meta = ModelMeta()
+
+        # 让类属性与规范化后的 meta 保持一致（'music' -> ('music',)），
+        # 这样实例上读 `model.audio_subtypes` 拿到的永远是规整结果。
+        cls.audio_subtypes = cls.meta.audio_subtypes
 
     @classmethod
     def _validate_forward_contract(cls) -> None:
@@ -153,16 +266,32 @@ class CausalLanguageModel(BasicModel):
         '''是否支持工具调用。'''
         return self.meta.supports_tool
 
+    @property
+    def supports_audio(self) -> bool:
+        '''是否支持音频（多模态）。'''
+        return self.meta.supports_audio
+
+    @property
+    def audio_subtypes(self) -> Tuple[str, ...]:
+        '''音频子类型：('speech',) / ('music',) / ('general',)；未开启音频时为 ()。'''
+        return self.meta.audio_subtypes
+
     def supports(self, capability: str) -> bool:
-        '''按名称查询能力：'image' / 'thinking' / 'tool'（也接受带 supports_ 前缀的写法）。'''
+        '''按名称查询能力：'image' / 'thinking' / 'tool' / 'audio'（也接受带 supports_ 前缀的写法）。'''
         name = capability[9:] if capability.startswith('supports_') else capability
         field_name = f'supports_{name}'
         if field_name not in ModelMeta.__dataclass_fields__:
+            expected = ', '.join(
+                repr(field[len('supports_'):]) for field in _BOOL_FIELDS
+            )
             raise ValueError(
-                f'unknown capability {capability!r}; '
-                f"expected one of 'image', 'thinking', 'tool'"
+                f'unknown capability {capability!r}; expected one of {expected}'
             )
         return bool(getattr(self.meta, field_name))
+
+    def supports_audio_subtype(self, subtype: str) -> bool:
+        '''按名称查询音频子类型：'speech'（说话声）/ 'music'（音乐）/ 'general'（通用）。'''
+        return self.meta.supports_audio_subtype(subtype)
 
 
     def generate(
