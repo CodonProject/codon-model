@@ -48,6 +48,14 @@ def apply_attention(
     tgt_len = query_states.size(-2)
     src_len = key_states.size(-2)
     if attention_mask is not None:
+        # [B, L]（Session / HF 风格的 padding mask：0 = padding）-> [B, 1, 1, L]，
+        # 这样才能与 causal mask [1, 1, L, L] 广播。B == 1 时结果与原来的隐式广播一致，
+        # B > 1 时原来会在 `attention_mask + causal_mask` 处直接报形状错。
+        if attention_mask.dim() == 2:
+            attention_mask = attention_mask.view(
+                attention_mask.size(0), 1, 1, attention_mask.size(-1)
+            )
+
         # Match query dtype rather than forcing FP32, so mixed-precision graphs
         # (e.g. FP16 ONNX exports) stay type-consistent end-to-end.
         if attention_mask.dtype != query_states.dtype:

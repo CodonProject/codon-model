@@ -14,6 +14,12 @@ import uvicorn
 from codon.model.types.language import CausalLanguageModel
 from codon.model.grammar import parse_response_format
 from codon.utils.tokens import PackedTokenizer
+from codon.utils.media import (
+    UnsupportedModalityError,
+    modal_config,
+    model_modalities,
+    normalize_messages,
+)
 
 
 @dataclass
@@ -39,7 +45,15 @@ class ChatMessage(BaseModel):
 
     Attributes:
         role (str): Role of the sender ('system', 'user', 'assistant').
-        content (Union[str, List[Dict[str, Any]]]): Message content.
+        content (Union[str, List[Dict[str, Any]]]): Message content。字符串是纯文本；列表则是
+            codon.j2 风格的多模态内容，媒体项在服务端解码成张量：
+
+                [{'type': 'text', 'text': '...'},
+                 {'type': 'image', 'image': '<data URL / base64 / 路径 / http URL>'},
+                 {'type': 'audio', 'audio': '<mel 张量载荷 / .npy / .pt / wav>'}]
+
+            也接受 OpenAI 风格写法：`{'type': 'image_url', 'image_url': {'url': ...}}` 与
+            `{'type': 'input_audio', 'input_audio': {'data': '<base64>', 'format': 'wav'}}`。
     '''
     role: str
     content: Union[str, List[Dict[str, Any]]]
@@ -137,6 +151,41 @@ class Service:
             return next(iterator)
         except StopIteration:
             return None
+
+    @staticmethod
+    def _error(status_code: int, message: str, code: str, param: str) -> JSONResponse:
+        '''OpenAI 风格的错误响应。'''
+        return JSONResponse(
+            status_code=status_code,
+            content={
+                'error': {
+                    'message': message,
+                    'type': 'invalid_request_error',
+                    'param': param,
+                    'code': code,
+                }
+            }
+        )
+
+    @staticmethod
+    def _format_messages(model: CausalLanguageModel, messages: List[ChatMessage]) -> List[Dict[str, Any]]:
+        '''
+        把请求消息规整成 `chat()` 能吃的格式：文本原样保留，媒体载荷解码成张量。
+
+        Raises:
+            UnsupportedModalityError: 消息带了模型没有声明的模态（图片 / 音频 / 视频）。
+            ValueError / TypeError / OSError: 媒体载荷无法解码。
+        '''
+        raw = [{'role': msg.role, 'content': msg.content} for msg in messages]
+        capabilities = model_modalities(model)
+        _, _, num_mel_bins = modal_config(model)
+        return normalize_messages(
+            raw,
+            image_capab=capabilities['image'],
+            audio_capab=capabilities['audio'],
+            video_capab=capabilities['video'],
+            num_mel_bins=num_mel_bins,
+        )
 
     async def list_models(self) -> JSONResponse:
         '''
@@ -270,16 +319,11 @@ class Service:
         '''
         model_id = request.model
         if model_id not in self.models:
-            return JSONResponse(
-                status_code=404,
-                content={
-                    'error': {
-                        'message': f"Model '{model_id}' not found.",
-                        'type': 'invalid_request_error',
-                        'param': 'model',
-                        'code': 'model_not_found'
-                    }
-                }
+            return self._error(
+                404,
+                f"Model '{model_id}' not found.",
+                'model_not_found',
+                'model',
             )
 
         card = self.models[model_id]
@@ -290,22 +334,20 @@ class Service:
         try:
             parse_response_format(request.response_format)
         except (TypeError, ValueError) as exc:
-            return JSONResponse(
-                status_code=400,
-                content={
-                    'error': {
-                        'message': f'Invalid response_format: {exc}',
-                        'type': 'invalid_request_error',
-                        'param': 'response_format',
-                        'code': 'invalid_response_format'
-                    }
-                }
+            return self._error(
+                400,
+                f'Invalid response_format: {exc}',
+                'invalid_response_format',
+                'response_format',
             )
 
-        # Construct messages dictionary
-        formatted_messages = []
-        for msg in request.messages:
-            formatted_messages.append({'role': msg.role, 'content': msg.content})
+        # 多模态内容：媒体载荷就地解码成张量，并校验模型能力（不支持就 400，而不是喂 unk token）
+        try:
+            formatted_messages = self._format_messages(model, request.messages)
+        except UnsupportedModalityError as exc:
+            return self._error(400, str(exc), 'unsupported_modality', 'content')
+        except (TypeError, ValueError, OSError, RuntimeError) as exc:
+            return self._error(400, f'Invalid message content: {exc}', 'invalid_content', 'content')
 
         request_id = f'chatcmpl-{uuid.uuid4()}'
         created_time = int(time.time())

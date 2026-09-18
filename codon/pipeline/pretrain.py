@@ -1,6 +1,6 @@
 from codon import *
 from codon.config import field, configclass
-from codon.pipeline.base import BasicPipeline, PipelinePhase
+from codon.pipeline.base import BasicPipeline, PipelinePhase, move_to_device
 from codon.pipeline.callback import Callback
 from codon.model.types.language import CausalLanguageModel, CausalLanguageModelOutput
 from codon.utils.plan import ContextTrainingPlanner, StatefulPlanRunner
@@ -359,18 +359,12 @@ class PretrainPipeline(BasicPipeline):
 
     @staticmethod
     def _to_device(value, device):
-        '''递归把 kwargs 里的张量搬到 device，保持 list/tuple 的嵌套结构。
+        '''递归把 kwargs 里的张量搬到 device（见 `codon.pipeline.base.move_to_device`）。
 
         多模态的 `images` 既可能是扁平的图像列表，也可能是「每 batch 行一个子列表」，
         压平会丢掉 batch 归属，因此这里逐层重建容器而不是 flatten。
         '''
-        if isinstance(value, torch.Tensor):
-            return value.to(device)
-        if isinstance(value, list):
-            return [PretrainPipeline._to_device(v, device) for v in value]
-        if isinstance(value, tuple):
-            return tuple(PretrainPipeline._to_device(v, device) for v in value)
-        return value
+        return move_to_device(value, device)
 
     def train_step(self, batch):
         model_kwargs, labels = self._unpack_batch(batch)

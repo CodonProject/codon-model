@@ -1,9 +1,12 @@
 from codon import *
 from codon.config import field, configclass
-from codon.pipeline.base import BasicPipeline, PipelinePhase
+from codon.pipeline.base import (
+    BasicPipeline, PipelinePhase, move_to_device, select_model_kwargs,
+)
 from codon.pipeline.callback import Callback
 from codon.model.types.language import CausalLanguageModel, CausalLanguageModelOutput
 from codon.utils.tokens import PackedTokenizer
+from codon.utils.media import modal_config
 
 from typing import Any, Dict, List, Optional, Union
 from tqdm import tqdm
@@ -93,12 +96,29 @@ class SFTStage:
     ckpt: Optional[str] = None      # 阶段结束 save_pretrained 到该路径
 
 
-def build_sft_stages(stage_specs, tokenizer, pad_length, batch_size, dataset_cls=None, **ds_kwargs):
+def build_sft_stages(stage_specs, tokenizer, pad_length, batch_size, dataset_cls=None,
+                     patch_size=None, audio_pool_stride=None, **ds_kwargs):
     '''stage_specs: [{name, folder, epochs, ckpt}, ...] -> List[SFTStage]
     dataset_cls: 数据集类，默认 codon.utils.data.sft.CodonSFT（自动识别 MotifSFT 行 /
-    session / messages / parquet 等混合格式）；显式传 codon.motif.data.MotifSFT 回到旧行为。'''
+    session / messages / parquet 等混合格式）；显式传 codon.motif.data.MotifSFT 回到旧行为。
+
+    patch_size / audio_pool_stride: 多模态占位符的展开参数（一般由 pipeline 按模型推导，
+    chord 是 16 / 8）。只有数据集类显式声明了这两个形参时才会注入，自定义数据集不受影响。
+    '''
     from codon.data.sft import CodonSFT
     cls = dataset_cls or CodonSFT
+
+    optional = {}
+    if patch_size is not None:
+        optional['patch_size'] = patch_size
+    if audio_pool_stride is not None:
+        optional['audio_pool_stride'] = audio_pool_stride
+    if optional:
+        accepted = _accepted_init_params(cls)
+        for key, value in optional.items():
+            if accepted is None or key in accepted:
+                ds_kwargs.setdefault(key, value)
+
     stages = []
     for s in stage_specs:
         ds = cls(
@@ -115,6 +135,18 @@ def build_sft_stages(stage_specs, tokenizer, pad_length, batch_size, dataset_cls
             ckpt=s.get('ckpt'),
         ))
     return stages
+
+
+def _accepted_init_params(cls) -> Optional[set]:
+    '''数据集 `__init__` 接受的形参名；收 `**kwargs` 或不可检视时返回 None（照单全收）。'''
+    import inspect
+    try:
+        params = inspect.signature(cls.__init__).parameters
+    except (TypeError, ValueError):
+        return None
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return None
+    return set(params)
 
 
 class _ProgressBar(Callback):
@@ -321,10 +353,14 @@ class SFTPipeline(BasicPipeline):
                 'SFTPipeline 需要显式 stages=... 或在 SFTConfig 声明 stage_specs '
                 '（形如 [{"name","folder","epochs","ckpt"}]）以自动构建数据集。')
         ds_kwargs = dict(cfg.dataset_kwargs or {})
+        # 多模态占位符参数按模型推导（chord: patch 16 / 音频池化 8）；dataset_kwargs 显式值优先
+        patch_size, audio_pool_stride, _ = modal_config(self._model)
         return build_sft_stages(
             specs, self._tokenizer,
             pad_length=cfg.pad_length, batch_size=cfg.batch_size,
-            dataset_cls=cfg.dataset_cls, **ds_kwargs,
+            dataset_cls=cfg.dataset_cls,
+            patch_size=patch_size, audio_pool_stride=audio_pool_stride,
+            **ds_kwargs,
         )
 
     @property
@@ -471,13 +507,19 @@ class SFTPipeline(BasicPipeline):
                     yield stage.dataset
 
     def train_step(self, batch):
-        input_ids = batch['input_ids'].to(self.device)
         labels = batch['labels'].to(self.device)
+
+        # 多模态 batch（images / audios / *_patch_indices / attention_mask）按 forward 签名透传；
+        # 纯文本 batch 只会挑到 input_ids（+ mask），自定义模型也不会被多模态字段弄出 TypeError。
+        model_kwargs = {
+            key: move_to_device(value, self.device)
+            for key, value in select_model_kwargs(self.model, batch).items()
+        }
 
         self._optimizer.zero_grad(set_to_none=True)
 
         with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-            output: CausalLanguageModelOutput = self.model(input_ids)
+            output: CausalLanguageModelOutput = self.model(**model_kwargs)
             # 与参考脚本一致：shift 后做交叉熵
             shift_logits = output.logits[:, :-1, :].contiguous()
             shift_labels = labels[:, 1:].contiguous()

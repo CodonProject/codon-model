@@ -7,11 +7,78 @@ import json
 import tempfile
 import time
 import os
+import inspect
 
 from abc import abstractmethod
 from enum import Enum, auto
 from functools import wraps
 from typing import Optional, List, Dict, Callable, Iterator
+
+import torch
+
+
+#: 训练步里可以从 batch dict 直接透传给 `forward` 的多模态 / 结构字段。
+#: `input_ids` 之外的都是可选字段：纯文本 batch 只会挑到 input_ids（+ attention_mask）。
+MODEL_BATCH_KEYS: tuple = (
+    'input_ids',
+    'images', 'image_patch_indices', 'image_patch_id',
+    'audios', 'audio_patch_indices', 'audio_patch_id',
+    'actions', 'action_patch_indices', 'action_patch_id',
+    'proprios', 'proprio_patch_indices', 'proprio_patch_id',
+    'tactiles', 'tactile_patch_indices', 'tactile_patch_id',
+    'attention_mask',
+)
+
+#: batch 字段名 -> `forward` 形参名（Session/数据集沿用 HF 的 attention_mask 叫法）
+MODEL_BATCH_ALIASES: Dict[str, str] = {'attention_mask': 'mask'}
+
+
+def move_to_device(value, device):
+    '''递归把（可能嵌套的）张量搬到 device。
+
+    多模态的 `images` 既可能是扁平列表，也可能是「每 batch 行一个子列表」，压平会丢掉
+    batch 归属，因此这里逐层重建容器而不是 flatten。
+    '''
+    if isinstance(value, torch.Tensor):
+        return value.to(device)
+    if isinstance(value, list):
+        return [move_to_device(v, device) for v in value]
+    if isinstance(value, tuple):
+        return tuple(move_to_device(v, device) for v in value)
+    return value
+
+
+def forward_accepted_kwargs(model) -> Optional[set]:
+    '''`forward` 接受的形参名集合；签名收 `**kwargs` 或不可检视时返回 None（表示「照单全收」）。'''
+    target = getattr(model, '_orig_mod', model)          # 解开 torch.compile 包装
+    forward = getattr(target, 'forward', None)
+    if forward is None:
+        return None
+    try:
+        params = inspect.signature(forward).parameters
+    except (TypeError, ValueError):
+        return None
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return None
+    return set(params)
+
+
+def select_model_kwargs(model, batch: Dict) -> Dict:
+    '''从 batch dict 里挑出 `forward` 真正接受的字段（并做 `attention_mask` -> `mask` 改名）。
+
+    这样纯文本模型 / 自定义模型不会被多模态字段弄出 `TypeError`，
+    而 `MotifChord` 这类多模态模型能拿到 images / audios / *_patch_indices / mask。
+    '''
+    accepted = forward_accepted_kwargs(model)
+    picked: Dict = {}
+    for key in MODEL_BATCH_KEYS:
+        if key not in batch:
+            continue
+        name = MODEL_BATCH_ALIASES.get(key, key)
+        if accepted is not None and name not in accepted and key not in accepted:
+            continue
+        picked[name] = batch[key]
+    return picked
 
 
 class PipelinePhase(Enum):

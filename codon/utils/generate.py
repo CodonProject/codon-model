@@ -4,6 +4,12 @@ import torch
 
 from codon.utils.tokens  import PackedTokenizer
 from codon.utils.session import Session
+from codon.utils.media   import (
+    modal_config,
+    model_modalities,
+    normalize_messages,
+    has_video_frames,
+)
 from codon.model.types.language import CausalLanguageModel
 from codon.model.sampler import Sampler
 from codon.model.cache import ModelCache
@@ -32,13 +38,16 @@ def chat(
     model: CausalLanguageModel,
     tokenizer: PackedTokenizer,
     device: torch.device,
-    messages: List[Dict[str, str]],
+    messages: List[Dict[str, Any]],
     max_new_tokens: int = 1024,
     temperature: float = 0.3,
     top_k: Optional[int] = None,
     top_p: Optional[float] = None,
     enable_thinking: bool = True,
     response_format: Optional[Dict[str, Any]] = None,
+    patch_size: Optional[int] = None,
+    audio_pool_stride: Optional[int] = None,
+    num_mel_bins: Optional[int] = None,
 ) -> Generator[ChatChunk, None, None]:
     '''
     Generates chat responses in a streaming fashion.
@@ -50,7 +59,15 @@ def chat(
         model (CausalLanguageModel): The causal language model used for text generation.
         tokenizer (PackedTokenizer): The tokenizer for encoding inputs and decoding outputs.
         device (torch.device): The device (CPU/CUDA) where the model computation is executed.
-        messages (List[Dict[str, str]]): A list of dialogue messages, where each message is a dictionary containing 'role' and 'content'.
+        messages (List[Dict[str, Any]]): A list of dialogue messages, where each message is a
+            dictionary containing 'role' and 'content'. `content` 可以是字符串，也可以是
+            codon.j2 风格的多模态列表：
+                [{'type': 'text', 'text': ...},
+                 {'type': 'image', 'image': <tensor / 路径 / base64 / data URL / PIL / ndarray>},
+                 {'type': 'audio', 'audio': <mel 张量 / .npy / .pt / wav 波形>}]
+            OpenAI 风格的 `image_url` / `input_audio` item 同样接受，媒体载荷由
+            `codon.utils.media` 解码成张量；模型没有声明对应模态能力时抛
+            `codon.utils.media.UnsupportedModalityError`。
         max_new_tokens (int): The maximum number of new tokens to generate. Defaults to 1024.
         temperature (float): Sampling temperature. Defaults to 0.3.
         top_k (Optional[int]): The number of highest probability vocabulary tokens to keep for top-k filtering. Defaults to None.
@@ -63,18 +80,47 @@ def chat(
             开启后**只在答案段**（[cot_end] / <|thought_end|> 之后）生效：思考过程自由生成，
             答案段被语法约束成合法 JSON（给定 schema 时还会约束键名 / 必填 / 类型 / enum）。
             非法配置抛 ValueError / UnsupportedSchemaError。
+        patch_size (int, optional): 图像占位符展开用的 patch 尺寸。默认取模型的
+            `image_patch_size`（MotifChord / DINOv3 是 16），纯文本模型退回 12。
+        audio_pool_stride (int, optional): 音频占位符展开用的池化步长，默认取模型的
+            `audio_pool_stride`（MotifChord / Whisper Tiny + pool 8 是 8）。
+        num_mel_bins (int, optional): 波形转 mel 的维数，默认取模型的 `audio_num_mel_bins`（80）。
 
     Notes:
         特殊 token 一律按逻辑名经 `Session` 解析，因此 A1 词表（`[cot_end]` / `[im_end]`）与
         A2 / chord 词表（`<|thought_end|>` / `<|tool_name_divider|>` / `<|im_end|>`）都适用。
         强制 JSON 时工具调用、模态、分隔符等结构 token 都在约束词表之外，答案只可能是纯 JSON。
 
+        多模态只在 prefill 阶段注入（`x[b, *_patch_indices] = 模态特征`，序列长度不变），
+        decode 步只喂新 token；与 `CausalLanguageModel.forward` 的占位符约定一致。
+
     Yields:
         ChatChunk: Generated text chunks containing content and Chain of Thought states.
     '''
     model.eval()
-    
-    session = Session(tokenizer)
+
+    capabilities = model_modalities(model)
+    default_patch_size, default_audio_stride, default_mel_bins = modal_config(model)
+    patch_size = default_patch_size if patch_size is None else int(patch_size)
+    audio_pool_stride = default_audio_stride if audio_pool_stride is None else int(audio_pool_stride)
+    num_mel_bins = default_mel_bins if num_mel_bins is None else int(num_mel_bins)
+
+    # 媒体载荷 -> 张量；模型没声明能力时在这里就报错，而不是把 unk token 喂给模型。
+    messages = normalize_messages(
+        messages,
+        image_capab=capabilities['image'],
+        audio_capab=capabilities['audio'],
+        video_capab=capabilities['video'],
+        num_mel_bins=num_mel_bins,
+    )
+
+    session = Session(
+        tokenizer,
+        patch_size=patch_size,
+        audio_pool_stride=audio_pool_stride,
+        # 逐帧视频（video + frames）复用图像塔，模板需要 video_capab 才会渲染帧
+        video_capab=has_video_frames(messages),
+    )
 
     # 特殊 token 一律按 Session 的逻辑名解析：A1 词表是 [cot_end] / [im_end]，
     # A2（codon/res 风格，如 chord.zip）是 <|thought_end|> / <|im_end|>，两种都能用。
@@ -99,6 +145,23 @@ def chat(
     tensors = session.to_tensors(device=device, batch_dim=True)
     input_ids = tensors['input_ids']
 
+    # 只有真的带了模态才把模态关键字传给 forward：纯文本模型的 forward 可能不吃这些参数。
+    modal_kwargs: Dict[str, Any] = {}
+    if len(tensors['images']) > 0:
+        modal_kwargs['images'] = tensors['images']
+        modal_kwargs['image_patch_indices'] = tensors['image_patch_indices']
+    if len(tensors['audios']) > 0:
+        modal_kwargs['audios'] = tensors['audios']
+        modal_kwargs['audio_patch_indices'] = tensors['audio_patch_indices']
+    # 连续向量模态（动作 / 本体感觉 / 触觉）：prefill 时就地写入占位符位置
+    for name in ('action', 'proprio', 'tactile'):
+        items = tensors[f'{name}s']
+        if len(items) > 0:
+            modal_kwargs[f'{name}s'] = items
+            modal_kwargs[f'{name}_patch_indices'] = tensors[f'{name}_patch_indices']
+    if modal_kwargs:
+        modal_kwargs['mask'] = tensors['attention_mask']
+
     sampler = Sampler(temperature=temperature, top_k=top_k, top_p=top_p)
     
     kv_cache = ModelCache()
@@ -115,11 +178,12 @@ def chat(
     cot_ended = False
 
     with torch.no_grad():
-        # Prefill
+        # Prefill（多模态在这里注入）
         outputs = model.forward(
             input_ids=input_ids,
             start_pos=0,
             past_key_values=kv_cache,
+            **modal_kwargs,
         )
         
         logits = outputs.logits[:, -1, :]

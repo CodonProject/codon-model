@@ -25,6 +25,31 @@
     {{- '<|effort_' ~ aliases[alias] ~ '|>' -}}
 {%- endmacro -%}
 
+{%- macro render_payload(value) -%}
+    {%- if value is undefined or value is none -%}
+    {%- elif value is string -%}
+        {{- value -}}
+    {%- elif value is mapping or (value is iterable and value is not string) -%}
+        {{- value | tojson(ensure_ascii=false) -}}
+    {%- else -%}
+        {{- value | string -}}
+    {%- endif -%}
+{%- endmacro -%}
+
+{%- macro guard_block(is_system, kind) -%}
+    {%- if is_system and attachment_strict -%}
+        {{- raise_exception('System message cannot contain ' ~ kind ~ '.') -}}
+    {%- endif -%}
+{%- endmacro -%}
+
+{%- macro render_block(start_token, end_token, payload, is_system, kind) -%}
+    {%- if is_system -%}
+        {{- guard_block(is_system, kind) -}}
+    {%- else -%}
+        {{- start_token -}}{{- render_payload(payload) -}}{{- end_token -}}
+    {%- endif -%}
+{%- endmacro -%}
+
 {%- macro render_content(content, is_system=false) -%}
     {%- if content is string -%}
         {{- content -}}
@@ -32,8 +57,79 @@
         {{- content | tojson(ensure_ascii=false) -}}
     {%- elif content is iterable and content is not mapping -%}
         {%- for item in content -%}
-            {%- set item_type = item.type | default('') -%}
-            {%- if item_type == 'text' or item.text is defined -%}
+            {%- set item_type = (item.type | default('')) | string | lower -%}
+            {%- if item_type in ['bbox', 'box', 'boxes'] -%}
+                {{- render_block('<|bbox_start|>', '<|bbox_end|>', item.bbox | default(item.box), is_system, 'bounding boxes') -}}
+            {%- elif item_type in ['point', 'points'] -%}
+                {{- render_block('<|point_start|>', '<|point_end|>', item.point | default(item.points), is_system, 'points') -}}
+            {%- elif item_type in ['ref', 'refer', 'reference'] -%}
+                {{- render_block('<|ref_start|>', '<|ref_end|>', item.ref | default(item.text), is_system, 'references') -}}
+            {%- elif item_type in ['grasp', 'grasps'] -%}
+                {{- render_block('<|grasp_start|>', '<|grasp_end|>', item.grasp | default(item.grasps), is_system, 'grasps') -}}
+            {%- elif item_type == 'action' -%}
+                {%- if is_system -%}
+                    {{- guard_block(is_system, 'actions') -}}
+                {%- else -%}
+                    {{- '<|action_start|><|action_pad|><|action_end|>' -}}
+                {%- endif -%}
+            {%- elif item_type in ['action_chunk', 'actions', 'chunk'] -%}
+                {%- if is_system -%}
+                    {{- guard_block(is_system, 'action chunks') -}}
+                {%- else -%}
+                    {%- set raw_steps = item.actions if item.actions is defined else item.action -%}
+                    {%- if raw_steps is undefined or raw_steps is none -%}
+                        {%- set steps = [none] -%}
+                    {%- elif raw_steps.shape is defined and raw_steps is not mapping -%}
+                        {%- set steps = [raw_steps] -%}
+                    {%- elif raw_steps is iterable and raw_steps is not string and raw_steps is not mapping -%}
+                        {%- set steps = raw_steps | list -%}
+                    {%- else -%}
+                        {%- set steps = [raw_steps] -%}
+                    {%- endif -%}
+                    {{- '<|action_chunk_start|>' -}}
+                    {%- for step in steps -%}
+                        {%- if not loop.first -%}{{- '<|action_sep|>' -}}{%- endif -%}
+                        {{- '<|action_start|><|action_pad|><|action_end|>' -}}
+                    {%- endfor -%}
+                    {%- set flag = (item.flag | default(item.status, true) | default('', true)) | string | lower -%}
+                    {%- if flag in ['terminate', 'terminated', 'end', 'stop'] -%}
+                        {{- '<|action_terminate|>' -}}
+                    {%- elif flag in ['continue', 'continued'] -%}
+                        {{- '<|action_continue|>' -}}
+                    {%- endif -%}
+                    {{- '<|action_chunk_end|>' -}}
+                {%- endif -%}
+            {%- elif item_type == 'proprio' -%}
+                {%- if is_system -%}
+                    {{- guard_block(is_system, 'proprioception') -}}
+                {%- else -%}
+                    {{- '<|proprio_start|><|proprio_pad|><|proprio_end|>' -}}
+                {%- endif -%}
+            {%- elif item_type in ['tactile', 'touch'] -%}
+                {%- if is_system -%}
+                    {{- guard_block(is_system, 'tactile readings') -}}
+                {%- else -%}
+                    {{- '<|tactile_start|><|tactile_pad|><|tactile_end|>' -}}
+                {%- endif -%}
+            {%- elif item_type == 'force' -%}
+                {{- render_block('<|force_start|>', '<|force_end|>', item.force | default(item.value), is_system, 'forces') -}}
+            {%- elif item_type in ['camera', 'cameras'] -%}
+                {%- if is_system -%}
+                    {{- guard_block(is_system, 'camera metadata') -}}
+                {%- else -%}
+                    {%- set camera_name = item.camera if item.camera is defined else (item.name if item.name is defined else '') -%}
+                    {%- set camera_id = item.id if item.id is defined else (item.camera_id if item.camera_id is defined else '') -%}
+                    {{- '<|camera_start|>' -}}
+                    {{- render_payload(camera_name) -}}
+                    {{- '<|camera_id|>' -}}
+                    {{- render_payload(camera_id) -}}
+                    {{- '<|camera_end|>' -}}
+                {%- endif -%}
+            {%- elif item_type in ['trajectory', 'traj'] -%}
+                {{- render_block('<|trajectory_start|>', '<|trajectory_end|>', item.trajectory | default(item.traj), is_system, 'trajectories') -}}
+            {%- elif item_type in ['waypoint', 'waypoints'] -%}
+                {{- render_block('<|waypoint_start|>', '<|waypoint_end|>', item.waypoint | default(item.waypoints), is_system, 'waypoints') -}}
+            {%- elif item_type == 'text' or item.text is defined -%}
                 {{- item.text | default('') -}}
             {%- elif item_type == 'image' or 'image_url' in item or 'image' in item -%}
                 {%- if is_system -%}
@@ -76,17 +172,47 @@
                     {%- if attachment_strict -%}
                         {{- raise_exception('System message cannot contain videos.') -}}
                     {%- endif -%}
-                {%- elif video_capab -%}
-                    {%- set video_count.value = video_count.value + 1 -%}
-                    {%- if add_attachment_id -%}
-                        {{- 'Video ' ~ video_count.value ~ ': ' -}}
-                    {%- endif -%}
-                    {{- '<|modality_video_start|><|modality_video_pad|><|modality_video_end|>' -}}
-                {%- else -%}
+                {%- elif not video_capab -%}
                     {%- if attachment_strict -%}
                         {{- raise_exception('Unsupported modality: video.') -}}
                     {%- else -%}
                         {{- 'Your video modality is unsupported' -}}
+                    {%- endif -%}
+                {%- elif item.frames is defined and item.frames and not image_capab -%}
+                    {#- 逐帧视频复用图像塔，需要 image_capab -#}
+                    {%- if attachment_strict -%}
+                        {{- raise_exception('Video frames require image capability.') -}}
+                    {%- else -%}
+                        {{- 'Your video modality is unsupported' -}}
+                    {%- endif -%}
+                {%- else -%}
+                    {%- set video_count.value = video_count.value + 1 -%}
+                    {%- if add_attachment_id -%}
+                        {{- 'Video ' ~ video_count.value ~ ': ' -}}
+                    {%- endif -%}
+                    {%- if item.frames is defined and item.frames -%}
+                        {%- set timestamps = item.timestamps | default([], true) -%}
+                        {{- '<|modality_video_start|>' -}}
+                        {%- for frame in item.frames -%}
+                            {%- set frame_map = frame if frame is mapping else {} -%}
+                            {%- if frame_map.timestamp is defined -%}
+                                {%- set ts = frame_map.timestamp -%}
+                            {%- elif loop.index0 < (timestamps | length) -%}
+                                {%- set ts = timestamps[loop.index0] -%}
+                            {%- else -%}
+                                {%- set ts = none -%}
+                            {%- endif -%}
+                            {{- '<|frame_start|>' -}}
+                            {%- if ts is not none and ts is not undefined -%}
+                                {{- '<|timestamp_start|>' -}}{{- render_payload(ts) -}}{{- '<|timestamp_end|>' -}}
+                            {%- endif -%}
+                            {{- '<|modality_image_start|><|modality_image_pad|><|modality_image_end|>' -}}
+                            {{- '<|frame_end|>' -}}
+                            {%- if not loop.last -%}{{- '<|frame_sep|>' -}}{%- endif -%}
+                        {%- endfor -%}
+                        {{- '<|modality_video_end|>' -}}
+                    {%- else -%}
+                        {{- '<|modality_video_start|><|modality_video_pad|><|modality_video_end|>' -}}
                     {%- endif -%}
                 {%- endif -%}
             {%- endif -%}
@@ -133,7 +259,7 @@
     
     {%- if tools -%}
         {%- for tool in tools -%}
-            {{- '\n' ~ tool | tojson(ensure_ascii=False) -}}
+            {{- '\n' ~ tool | tojson(ensure_ascii=false) -}}
         {%- endfor -%}
         {{- '\n\nTo call a tool, output: <|tool_call_start|>tool_name<|tool_name_divider|>{"arg": "val"}<|tool_call_end|>' -}}
     {%- endif -%}
@@ -150,6 +276,10 @@
         {{- '<|im_end|>' -}}
     {%- elif message.role == 'user' -%}
         {{- '<|im_start|><|user|>' -}}
+        {{- render_content(message.content) | trim -}}
+        {{- '<|im_end|>' -}}
+    {%- elif message.role == 'environment' -%}
+        {{- '<|im_start|><|environment|>' -}}
         {{- render_content(message.content) | trim -}}
         {{- '<|im_end|>' -}}
     {%- elif message.role in ['assistant', 'model'] -%}

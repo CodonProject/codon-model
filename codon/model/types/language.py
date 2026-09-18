@@ -296,6 +296,23 @@ class CausalLanguageModel(BasicModel):
         '''按名称查询音频子类型：'speech'（说话声）/ 'music'（音乐）/ 'general'（通用）。'''
         return self.meta.supports_audio_subtype(subtype)
 
+    # ---- 多模态占位符参数（供 utils/generate、utils/service 构造 Session）----
+    # 纯文本模型保持 None：占位符参数由调用方给的默认值决定，行为与以前一致。
+    @property
+    def image_patch_size(self) -> Optional[int]:
+        '''图像占位符展开用的 patch 尺寸（`Session(patch_size=...)`）；纯文本模型为 None。'''
+        return None
+
+    @property
+    def audio_pool_stride(self) -> Optional[int]:
+        '''音频占位符展开用的池化步长（`Session(audio_pool_stride=...)`）；纯文本模型为 None。'''
+        return None
+
+    @property
+    def audio_num_mel_bins(self) -> Optional[int]:
+        '''音频塔的 mel 维数（波形转 mel 时使用）；纯文本模型为 None。'''
+        return None
+
 
     def generate(
         self,

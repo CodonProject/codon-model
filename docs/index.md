@@ -66,12 +66,14 @@ codon/
 │   └── patch_disc.py    # PatchGAN Discriminator
 ├── kit/            # Training and deployment utilities
 │   └── train/           # Training loops and context scheduling
+├── pipeline/       # End-to-end training pipelines (pretrain / SFT / RL)
 └── utils/          # Infrastructure and experimental helpers
     ├── tokens.py        # PackedTokenizer for text packing
     ├── seed.py          # Random seed management
     ├── info.py          # Runtime environment detection
     ├── generate.py      # Sampling / streaming generation
     ├── service.py       # OpenAI-compatible FastAPI inference service
+    ├── media.py         # Image / audio payload decoding for chat & service
     ├── session.py       # Multimodal dialogue Session with dynamic masking
     ├── plan.py          # Chinchilla context training planner
     ├── theta.py         # RoPE theta validation
@@ -120,6 +122,7 @@ codon/
   - [System Information](utils/info.md) - SystemEnvironment
   - [Generation](utils/generate.md) - Streaming generation
   - [Service](utils/service.md) - OpenAI-compatible FastAPI service
+  - [Media](utils/media.md) - Image / audio payload decoding for chat & service
   - [Session](utils/session.md) - Multimodal dialogue Session with dynamic masking
   - [Training Plan](utils/plan.md) - Context training planner (Foundation / Expansion / Stabilization)
   - [Utility Functions](utils/utils.md) - RoPE theta validation / attention masking / lifecycle callbacks
@@ -134,6 +137,9 @@ codon/
 - [Training Kit](kit/)
   - [Language Training](kit/language.md)
   - [Vision Training](kit/vision.md)
+
+- [Training Pipelines](pipeline.md)
+  - [Pretrain / SFT](pipeline.md) - Multimodal (image / audio) batches, placeholder params, LoRA & compile notes
 
 - [Developer Tools](dev/cli.md)
   - [CLI](dev/cli.md) - `codon hash`, `codon clear`

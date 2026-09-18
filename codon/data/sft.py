@@ -411,6 +411,8 @@ class CodonSFT(CodonDataset):
         recursive: bool = True,
         seed: int = 42,
         merge_turns: bool = True,
+        patch_size: int = 12,
+        audio_pool_stride: int = 8,
     ) -> None:
         if two_turn_prob < 0 or three_turn_prob < 0:
             raise ValueError('turn probabilities must be non-negative')
@@ -433,6 +435,9 @@ class CodonSFT(CodonDataset):
         self.merge_turns = merge_turns
         self.pattern = pattern
         self.recursive = recursive
+        # 多模态占位符展开参数（需与模型一致：MotifChord+DINOv3 是 16，Whisper 池化 8）
+        self.patch_size = patch_size
+        self.audio_pool_stride = audio_pool_stride
 
         rows = self._load_rows(folder)
         if not rows:
@@ -570,7 +575,11 @@ class CodonSFT(CodonDataset):
             raise ValueError(f'unknown canonical role {role!r}')
 
     def _build_session(self, group: dict) -> Session:
-        session = Session(self.tokenizer)
+        session = Session(
+            self.tokenizer,
+            patch_size=self.patch_size,
+            audio_pool_stride=self.audio_pool_stride,
+        )
         if group.get('system'):
             session.add_message({'role': 'system', 'content': group['system']})
         for turn in group['turns']:

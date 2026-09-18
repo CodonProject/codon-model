@@ -49,6 +49,8 @@ class MotifSFT(CodonDataset):
         pattern: str = '*.jsonl',
         recursive: bool = True,
         seed: int = 42,
+        patch_size: int = 12,
+        audio_pool_stride: int = 8,
     ) -> None:
         if two_turn_prob < 0 or three_turn_prob < 0:
             raise ValueError('turn probabilities must be non-negative')
@@ -68,6 +70,9 @@ class MotifSFT(CodonDataset):
             list(system_prompts) if system_prompts else list(_DEFAULT_SYSTEM_PROMPTS)
         )
         self.seed = seed
+        # 多模态占位符展开参数（需与模型一致：MotifChord+DINOv3 是 16，Whisper 池化 8）
+        self.patch_size = patch_size
+        self.audio_pool_stride = audio_pool_stride
 
         self.samples = self._load_jsonl(folder, pattern, recursive)
         if not self.samples:
@@ -117,7 +122,11 @@ class MotifSFT(CodonDataset):
         return groups
 
     def _build_session(self, group: dict) -> Session:
-        session = Session(self.tokenizer)
+        session = Session(
+            self.tokenizer,
+            patch_size=self.patch_size,
+            audio_pool_stride=self.audio_pool_stride,
+        )
         session.add_message({'role': 'system', 'content': group['system']})
         for turn in group['turns']:
             session.add_message({

@@ -1,7 +1,14 @@
 import torch
+from typing import Union
 
 from codon.utils.session import Session
 from codon.utils.tokens  import PackedTokenizer
+from codon.utils.media   import (
+    modal_config,
+    model_modalities,
+    normalize_messages,
+    has_video_frames,
+)
 
 from tqdm import tqdm
 
@@ -42,7 +49,7 @@ def run_chat_turn(
     tokenizer: PackedTokenizer,
     device,
     step: int,
-    user_prompt: str = 'Hello.',
+    user_prompt: Union[str, list] = 'Hello.',
     system_prompt: str = 'You are a helpful assistant.',
     max_new_tokens: int = 128,
     temperature: float = 0.8,
@@ -62,7 +69,9 @@ def run_chat_turn(
         tokenizer (PackedTokenizer): The packed tokenizer with chat template.
         device (torch.device | str): Target device for the prompt tensor.
         step (int): Current training step, for log prefix.
-        user_prompt (str): User content of this turn.
+        user_prompt (str | list): 文本，或 codon.j2 风格的多模态内容列表
+            （`{'type': 'image', 'image': <张量 / 路径 / base64>}` / `{'type': 'audio', 'audio': mel}`）；
+            媒体载荷由 `codon.utils.media` 解码，模型没声明该模态能力时抛 UnsupportedModalityError。
         system_prompt (str): System persona/instruction.
         max_new_tokens (int): Generation budget.
         temperature (float): Sampling temperature.
@@ -77,14 +86,51 @@ def run_chat_turn(
     was_training = model_instance.training
     try:
         # Build the prompt via Session so the chat template is faithfully reproduced.
-        session = Session(tokenizer)
-        session.add_message({'role': 'system', 'content': system_prompt})
-        session.add_message({'role': 'user',   'content': user_prompt})
+        # 多模态占位符参数（patch 尺寸 / 音频池化步长 / mel 维数）按模型推导。
+        patch_size, audio_pool_stride, num_mel_bins = modal_config(model_instance)
+        capabilities = model_modalities(model_instance)
+
+        messages = [
+            {'role': 'system', 'content': system_prompt},
+            {'role': 'user',   'content': user_prompt},
+        ]
+        messages = normalize_messages(
+            messages,
+            image_capab=capabilities['image'],
+            audio_capab=capabilities['audio'],
+            video_capab=capabilities['video'],
+            num_mel_bins=num_mel_bins,
+        )
+
+        session = Session(
+            tokenizer,
+            patch_size=patch_size,
+            audio_pool_stride=audio_pool_stride,
+            video_capab=has_video_frames(messages),
+        )
+        session.add_messages(messages)
         session.add_generation_prompt(enable_thinking=enable_thinking)
 
-        prompt_ids = session.input_ids
-        prompt_len = len(prompt_ids)
-        prompt_tensor = torch.tensor([prompt_ids], dtype=torch.long, device=device)
+        tensors = session.to_tensors(device=device, batch_dim=True)
+        prompt_ids = tensors['input_ids'][0].detach().cpu().tolist()
+        prompt_tensor = tensors['input_ids']
+        prompt_len = int(prompt_tensor.shape[1])
+
+        # 模态只在 prefill 注入；模型没声明能力时 normalize_messages 已经拦下。
+        modal_kwargs = {}
+        if len(tensors['images']) > 0:
+            modal_kwargs['images'] = tensors['images']
+            modal_kwargs['image_patch_indices'] = tensors['image_patch_indices']
+        if len(tensors['audios']) > 0:
+            modal_kwargs['audios'] = tensors['audios']
+            modal_kwargs['audio_patch_indices'] = tensors['audio_patch_indices']
+        for name in ('action', 'proprio', 'tactile'):
+            items = tensors[f'{name}s']
+            if len(items) > 0:
+                modal_kwargs[f'{name}s'] = items
+                modal_kwargs[f'{name}_patch_indices'] = tensors[f'{name}_patch_indices']
+        if modal_kwargs:
+            modal_kwargs['mask'] = tensors['attention_mask']
 
         # 特殊 token 按逻辑名解析：A1 的 [im_end] 与 A2/chord 的 <|im_end|> 都能取到
         eos_id = session.token_id(eos_token)
@@ -100,6 +146,7 @@ def run_chat_turn(
                 temperature=temperature,
                 sampler=sampler,
                 eos_token_id=eos_id,
+                **modal_kwargs,
             )
 
         full_ids = generated[0].detach().cpu().tolist()
@@ -110,7 +157,7 @@ def run_chat_turn(
 
         reply = tokenizer.decode(display_ids, skip_special_tokens=False)
 
-        print(f'[*] User    : {user_prompt}')
+        print(f'[*] User    : {user_prompt if isinstance(user_prompt, str) else "[multimodal]"}')
         print(f'[*] Assistant: {reply}')
         if print_full:
             full_text = tokenizer.decode(full_ids, skip_special_tokens=False)

@@ -22,7 +22,10 @@ class MotifChordVisionProjector(BasicModel):
             dropout=config.dropout,
         )
 
+    @torch.compiler.disable
     def forward(self, pixel_values: torch.Tensor) -> torch.Tensor:
+        # 冻结塔（+ 投影）整段 eager 执行：torch.compile 时把重塔留在图外，
+        # 与 codon/motif/base.py 的 VisionEmbedding.embed_image 同一套做法。
         pixel_values = pixel_values.to(self._encoder_dtype)
 
         with torch.no_grad():
